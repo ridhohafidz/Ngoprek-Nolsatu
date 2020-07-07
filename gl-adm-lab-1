@@ -1,0 +1,410 @@
+###########################
+##### Lab 1 - GL-ADM ######
+###########################
+
+##### Instruksi Environment Lab #####
+0. Saat ada X maka ubah ke nomor absen anda
+1. Buat dua instance podX-gitlab dan podx-node1,
+   - podX-gitlab ns.4-4-20 dan IP 10.X.X.50
+   - podx-node1 ns.2-2-20 dan IP 10.X.X.100
+2. Instance dibuat dengan image ubuntu-18.04-server-cloudimg-amd64
+
+#A> Screenshot bagian Network Topology > Topology > Normal. Beri nama X-gl-adm-A.png
+
+
+############### Setup Gitlab Server ############### 
+
+#### Update and Install Package Gitlab podX-gitlab ####
+
+#1. Update Package
+sudo apt-get update
+sudo apt-get install ca-certificates curl openssh-server postfix -y
+
+#2. Install Gitlab
+cd /tmp
+sudo curl -LO https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh
+sudo bash /tmp/script.deb.sh
+sudo apt install gitlab-ce
+
+#3. Edit file gitlab.rb
+sudo vim /etc/gitlab/gitlab.rb
+......
+external_url 'http://Floating-IP/'
+......
+
+sudo gitlab-ctl reconfigure
+
+#B> Screenshot bahwa gitlab sudah bisa diakses via browser. Beri nama X-gl-adm-B.png
+
+## Akses awal gitlab
+## Username : root
+passwd: ridho12345
+
+############### podX-gitlab dan podx-node1 ###############
+
+#### Install Docker ####
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+sudo systemctl status docker
+docker --version
+
+#### Install Docker Compose ####
+
+#1. Unduh Docker Compose
+sudo curl -L https://github.com/docker/compose/releases/download/1.20.1/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+
+#2. Set permisson executable
+sudo chmod +x /usr/local/bin/docker-compose
+
+#3. Uji instalasi
+sudo docker-compose --version
+
+
+#### Install Gitlab Runner podX-gitlab ####
+
+sudo wget -O /usr/bin/gitlab-runner https://gitlab-runner-downloads.s3.amazonaws.com/latest/binaries/gitlab-runner-linux-amd64
+sudo chmod +x /usr/bin/gitlab-runner
+
+### Membuat user Gitlab CI ###
+sudo useradd --comment 'GitLab Runner' --create-home gitlab-runner --shell /bin/bash
+
+### Install dan Menjalankan service ###
+sudo gitlab-runner install --user=gitlab-runner --working-directory=/home/gitlab-runner
+
+################################
+Melanjutkan .....
+######## Buat Project ##########
+
+#1. Buat project di gitlab
+Nama project: apps
+Visibility Level : Public
+
+#2. Clone Project
+cd ~/
+git clone http://Floating-IP/[PATH_REPO]
+cd apps
+
+### Buat Dockerfile, Docker Compose, GitLab CI dan HTML ###
+
+# Dockerfile
+vi Dockerfile
+
+FROM httpd:latest
+ADD . /usr/local/apache2/htdocs/
+
+# Docker Compose
+vi docker-compose.yml
+
+version: '2'
+services: 
+  app:
+    container_name: app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: app:1
+    network_mode: bridge
+    restart: always
+    ports:
+      - "8070:80"
+
+# GitLab CI
+vi .gitlab-ci.yml
+
+stages:
+- deploy
+
+docker:
+  stage: deploy
+  script:
+    - docker-compose down --rmi all
+    - docker-compose up -d --build
+  only:
+    - master
+  tags:
+    - apps
+
+# HTML
+vi index.html
+
+!! Hello World !! 
+
+#4. Push ke Gitlab
+git add .
+git commit -m "Initial commit"
+git push
+
+#5. Token Runner
+# Gunakan browser dan akses http://Floating-IP/[PATH_REPO]/apps
+# Menu Setting > CI / CD > Runners > Shared Runners ## klik Disable shared Runners ##
+# Menu Setting > CI / CD > Runners > Setup a specific Runner manually
+# Catat Token
+G1Aj1LVQECQ7nWiHZ6s5
+
+#6. Register Gitlab Runner Executor Shell
+#Ganti REGISTRATION_TOKEN dengan Token Runner
+sudo gitlab-runner register -n \
+  --url http://10.1.1.148/ \
+  --registration-token G1Aj1LVQECQ7nWiHZ6s5 \
+  --executor shell \
+  --description "apps" \
+  --tag-list "apps"
+
+#7. Set permisson dan Verifikasi Gitlab Runner
+sudo usermod -aG docker gitlab-runner
+sudo -u gitlab-runner -H docker info
+sudo gitlab-runner start
+sudo gitlab-runner list
+sudo gitlab-runner status
+sudo gitlab-runner verify
+
+#C> Screenshot hasil eksekusi gitlab-runner verify "Alive". Beri nama X-gl-adm-C.png
+
+
+# Pastikan runner app statusnya running
+# Gunakan browser dan akses http://Floating-IP/[PATH_REPO]/settings/ci_cd
+
+#D> Screenshot Status Runner. Beri nama X-gl-adm-D.png
+
+######## Testing ########
+
+# Gunakan browser dan akses http://Floating-IP/[PATH_REPO]/pipelines
+# Run Pipeline > Create Pipeline
+
+#E> Verifikasi http://Floating-IP/[PATH_REPO]/-/jobs/xxxxxxxxx "Job succeeded". Beri nama X-gl-adm-E.png
+
+
+### Eksekusi PodX-gitlab ###
+sudo su
+docker ps
+curl -i http://localhost:8070 && echo ""
+
+
+######## Testing Lagi ########
+
+# Buat file ok.html
+vi ok.html
+
+Hello [Username-X]
+
+# Push file ok.html ke project app
+
+# Eksekusi di podX-gitlab
+sudo su
+docker ps
+curl -i http://localhost:8070 && echo ""
+curl -i http://localhost:8070/ok.html && echo ""
+
+#F> Screenshot hasil dari eksekusi semua curl. Beri nama X-gl-adm-F.png
+
+######## Integrasi Gitlab CI/CD dengan Heroku ##########
+
+#1. Buat project di gitlab
+Nama project: ci-cd-[USERNAME]-X
+Visibility Level : Public
+
+#2. Clone Project
+cd ~/
+git clone http://Floating-IP/[PATH_REPO]
+cd ci-cd-[USERNAME]-X
+
+# Gunakan browser dan akses http://Floating-IP/[PATH_REPO]/ci-cd-[USERNAME]-X
+# Menu Setting > CI / CD > Runners > Setup a specific Runner manually
+# Catat Token
+NbfPsuxoxaY2mkDvJYks
+
+#3. Register Gitlab Runner Executor Docker
+sudo gitlab-runner register -n \
+  --url http://Floating-IP/ \
+  --registration-token NbfPsuxoxaY2mkDvJYks \
+[REGISTRATION_TOKEN] \
+  --executor docker \
+  --description "Docker Runner" \
+  --docker-image "node:8.10" \
+  --docker-volumes /var/run/docker.sock:/var/run/docker.sock
+
+#4. Verifikasi Gitlab Runner
+sudo gitlab-runner start
+sudo gitlab-runner verify
+
+#5. Buat App baru di heroku.com
+App Name : ci-cd-[USERNAME]-X
+Visibility Level : Public
+
+# Masuk ke https://dashboard.heroku.com/account
+# Pada bagian API Key, catat Token
+
+302d791d-93dc-4900-b30b-74c2dfd34431
+
+### Buat File Pendukung ###
+
+# Dockerfile
+vi Dockerfile
+
+FROM node:8.11.3
+ADD . /usr/local/apache2/htdocs/
+
+# .gitlab-ci.yml
+vi .gitlab-ci.yml
+
+image: node:8.10
+
+stages:
+  - build
+  - production
+    
+build:
+  type: build
+  script:
+    - npm install
+  only:
+    - master
+     
+deploy-production:
+  type: deploy
+  image: ruby:2.5.1
+  stage: production
+  only:
+    - master
+  environment:
+    name: production
+    url: https://$HEROKU_APP.$APP_DOMAIN  
+  script:
+    - apt-get update -qy
+    - apt-get install -y ruby ruby-dev rubygems-integration
+    - gem install dpl
+    - dpl --provider=heroku --app=$HEROKU_APP --api-key=$API_KEY
+
+
+# Procfile
+vi Procfile
+
+web: npm start
+
+# index.html
+vi index.html
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Simple DOM example</title>
+  </head>
+  <body>
+      Angka 1: <input type="text" id="angka1" /><br />
+      Angka 2: <input type="text" id="angka2" /><br />
+      Operasi: 
+      <input type="radio" checked value="penjumlahan" name="operasi" /> Penjumlahan 
+      <input type="radio" value="pengurangan" name="operasi" /> Pengurangan 
+      <input type="radio" value="perkalian" name="operasi" /> Perkalian
+      <input type="radio" value="pembagian" name="operasi" /> Pembagian
+      <br />
+      <button id="hitung">Hitung</button>
+      <h1 style="text-align: center; color: red">Hasil penjumlahan: 200</h1>
+
+      <script type="text/javascript" src="index.js"></script>
+      <p align="center">Copyright mridho12-20</p>
+    </body>
+</html>
+
+
+# package.json
+vi package.json
+
+{
+  "name": "vuedidot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "http-server"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "http-server": "^0.11.1",
+    "webpack": "^4.16.3",
+    "webpack-dev-server": "^3.1.5"
+  },
+  "devDependencies": {
+    "webpack-cli": "^3.1.0"
+  }
+}
+
+
+# index.js
+vi index.js
+
+var btn = document.getElementById('hitung');
+
+// fungsi penjumlahan
+function penjumlahan(a, b) {
+    return a + b;
+}
+
+btn.addEventListener('click', function(evt) {
+    // console.log('Hello world');
+    var input1 = document.getElementById('angka1');
+    var input2 = document.getElementById('angka2');
+
+    var angka1 = parseInt(input1.value);
+    var angka2 = parseInt(input2.value);
+
+    var operasi = document.querySelector('input[name=operasi]:checked').value;
+
+    // console.log(operasi);
+    var result = 0;
+    switch (operasi) {
+        case 'penjumlahan':
+            result = angka1 + angka2;
+            break;
+        case 'pengurangan':
+            result = angka1 - angka2;
+            break;
+        case 'perkalian':
+            result = angka1 * angka2;
+            break;
+        case 'pembagian':
+            result = angka1 / angka2;
+            break;
+    }
+
+    document.querySelector('h1').innerHTML = "Hasil " + operasi + ": " + result;
+});
+
+#3. Set Variabel CI/CD 
+# Gunakan browser dan akses http://Floating-IP/[PATH_REPO]/ci-cd-[USERNAME]-X
+# Menu Setting > CI / CD > Variables
+302d791d-93dc-4900-b30b-74c2dfd34431 
+- API_KEY = 302d791d-93dc-4900-b30b-74c2dfd34431 
+[Token-Heroku]
+- APP_DOMAIN = heroku.com
+- HEROKU_APP = ci-cd-[USERNAME]-X
+# Save Variables
+
+#4. Push ke Gitlab
+git add .
+git commit -m "Initial commit"
+git push
+
+##### Cek Hasil Deployment #####
+# Gunakan browser dan akses http://Floating-IP/[PATH_REPO]/pipelines
+# Run Pipeline > Create Pipeline
+# Tunggu sampai proses pipeline selesai dan status menjadi passed
+
+#G> Verifikasi http://Floating-IP/[PATH_REPO]/-/jobs/xxxxxxxxx Job succeeded dan Runner menggunakan Docker. Beri nama X-gl-adm-G.png
+
+# Akses hasil Deploymend 
+https://ci-cd-[USERNAME]-X.herokuapp.com/
+
+#H> Screenshot akses hasil deployment Heroku. Beri nama X-gl-adm-H.png
+
+##### Quiz #####
+GydURzUquUQDxy8s6VY8
+1. Buat shared runner yang bisa digunakan semua project.
+2. Shared runner menggunakan image "ruby:2.5"
+3. Description Shared runner "shared-runner-[username-X]"
+
+#I> Screenshot pada dashboard gitlab bahwa type runner "Shared Runners" sudah ada, serta dibuktikan dengan membuat project baru cek pada bagian setting -> CI/CD -> Runners. Beri nama X-gl-adm-I.png

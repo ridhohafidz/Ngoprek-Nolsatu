@@ -1,0 +1,215 @@
+##########################
+##### Lab 1 - DO-PRO #####
+##########################
+
+##### Instruksi Environment Lab #####
+0. Saat ada X maka ubah ke nomor absen anda
+1. Saat ada [username] maka ubah ke username anda
+2. Buat 2 instance dengan nama podX-node0 & podX-node1
+3. Spesifikasi masing-masing Instance 2 vCPU dan 4 GB vRAM dan images CentOS-7-x86_64-GenericCloud-1802.qcow2
+4. IP Address podX-node0 = 10.X.X.10/24, podX-node1 = 10.X.X.20/24
+
+#A> Full screenshot bagian Network Topology > Topology > Normal. Beri nama X-do-pro-A.png
+
+
+#################################
+##### Install Node Exporter #####
+#################################
+
+### Eksekusi di node podX-node0 dan podX-node1 ###
+
+##1. Download Paket Node Exporter
+cd /opt
+wget https://github.com/prometheus/node_exporter/releases/download/v0.18.1/node_exporter-0.18.1.linux-amd64.tar.gz
+tar xvfz node_exporter-0.18.1.linux-amd64.tar.gz
+
+##2. Start Node Exporter
+cd node_exporter-0.18.1.linux-amd64
+./node_exporter --help
+./node_exporter --version
+./node_exporter
+
+##3. Gunakan browser dan akses metrics:
+#- http://floating-ip-podX-node0:9100/metrics
+#- http://floating-ip-podX-node1:9100/metrics
+#- http://floating-ip-podX-node2:9100/metrics
+
+#B> Full screenshot kedua metrics tersebut. Beri nama X-do-pro-B.png
+
+##4. Running Node Exporter as a Service
+vi /etc/systemd/system/node_exporter.service
+
+[Unit]
+Description=Node Exporter
+
+[Service]
+User=root
+ExecStart=/opt/node_exporter-0.18.1.linux-amd64/node_exporter
+
+[Install]
+WantedBy=default.target
+
+
+##5. Start Node Exporter Service
+systemctl daemon-reload
+systemctl enable node_exporter.service
+systemctl start node_exporter.service
+systemctl status node_exporter.service
+journalctl -u node_exporter
+
+
+#####################################
+##### Install Prometheus Server #####
+#####################################
+
+### Eksekusi di node podX-node0
+
+##1. Download Paket Prometheus Server
+cd /opt
+wget https://github.com/prometheus/prometheus/releases/download/v2.10.0/prometheus-2.10.0.linux-amd64.tar.gz
+tar xvfz prometheus-2.10.0.linux-amd64.tar.gz
+
+##2. Konfigurasi Prometheus Server
+cd prometheus-2.10.0.linux-amd64
+vi config.yml
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus-[username]'
+    static_configs:
+    - targets: ['10.X.X.10:9090']
+  - job_name: 'node-[username]'
+    static_configs:
+    - targets: ['10.X.X.10:9100','10.X.X.20:9100']
+
+##3. Start Prometheus Server
+./promtool check config config.yml
+./prometheus --help
+./prometheus --version
+./prometheus --config.file=/opt/prometheus-2.10.0.linux-amd64/config.yml
+
+##4. Gunakan browser dan akses url berikut:
+#- Metrics: http://floating-ip-podX-node0:9090/metrics
+#- Graph: http://floating-ip-podX-node0:9090/
+#- Target: http://floating-ip-podX-node0:9090/targets
+
+##5. Running Prometheus Server as a Service
+vi /etc/systemd/system/prometheus_server.service
+
+[Unit]
+Description=Prometheus Server
+
+[Service]
+User=root
+ExecStart=/opt/prometheus-2.10.0.linux-amd64/prometheus --config.file=/opt/prometheus-2.10.0.linux-amd64/config.yml --web.external-url=http://floating-ip-podX-node0:9090/
+
+[Install]
+WantedBy=default.target
+
+##6. Start Prometheus Server Service
+systemctl daemon-reload
+systemctl enable prometheus_server.service
+systemctl start prometheus_server.service
+systemctl status prometheus_server.service
+journalctl -u prometheus_server
+
+
+################
+##### Quiz #####
+################
+
+1. Install Docker CE di podX-node1 (https://docs.docker.com/install/linux/docker-ce/centos/).
+2. Expose metric Docker (https://docs.docker.com/config/thirdparty/prometheus/ - Configure Docker).
+3. Tambahkan Docker ke Prometheus Server sebagai target dengan job_name: 'docker-[username]'.
+
+#C> Full screenshot metric Docker dan beri nama X-do-pro-C.png
+#D> Full screenshot http://floating-ip-podX-node0:9090/targets. Beri nama X-do-pro-D.png
+
+
+#########################
+##### Latihan Query #####
+#########################
+
+### Expose metric MySql di dalam docker container
+### Eksekusi di podX-node1
+
+##2. Buat dan jalankan container MySql
+
+docker run -d \
+--name mysql80 \
+--publish 3306 \
+--network db_network \
+--restart unless-stopped \
+--env MYSQL_ROOT_PASSWORD=katakunci \
+--volume mysql80-datadir:/var/lib/mysql \
+mysql:8 \
+--default-authentication-plugin=mysql_native_password
+
+##3. Buat monitoring user di dalam container MySql
+
+docker exec -it mysql80 mysql -uroot -p
+mysql> CREATE USER 'exporter'@'%' IDENTIFIED BY 'katakunci' WITH MAX_USER_CONNECTIONS 3;
+mysql> GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';
+
+##4. Jalankan MySql exporter untuk mendapatkan metric di dalam container
+
+docker run -d \
+--name mysql80-exporter \
+--publish 9104 \
+--restart always \
+--env DATA_SOURCE_NAME="exporter:katakunci@(mysql80:3306)/" \
+prom/mysqld-exporter:latest \
+--collect.info_schema.processlist \
+--collect.info_schema.innodb_metrics \
+--collect.info_schema.tablestats \
+--collect.info_schema.tables \
+--collect.info_schema.userstats \
+--collect.engine_innodb_status
+
+#E> Full screenshot status container Docker. Beri nama X-do-pro-E.png
+#F> Full screenshot hasil curl metric MySql. Beri nama X-do-pro-F.png
+
+##5. Gunakan browser dan akses graph: http://floating-ip-podX-node0:9090/
+#- Pada form expression ketikkan: engine_daemon_container_states_containers
+#- Klik button Execute
+#- Pada tab console kolom element dan value pastikan mengikuti status container
+#- Jika sudah sesuai: #F> Full screenshot hasil query dan beri nama X-do-pro-F.png
+#- Eksekusi satu per satu metrics yang ada dalam kolom element.
+
+##6. Mendapatkan status (up/down) dari target.
+#- Pada form expression ketikkan: up
+#- Klik button Execute
+#- Perhatikan pada tab console kolom element dan value. Value 1 berarti target dalam kondisi up.
+#- Eksekusi satu per satu metrics yang ada dalam kolom element.
+
+##7. Mendapatkan uptime podX-node0.
+#- Pada form expression ketikkan: (time() - process_start_time_seconds{instance="10.X.X.10:9100",job="node-[username]"})
+#- Klik button Execute
+#- Perhatikan pada tab console kolom element dan value. Value berisi uptime target dalam detik.
+#- Dapatkan uptime podX-node1.
+
+##8. Mendapatkan persentase rata-rata penggunaan CPU di podX-node1 dalam 5 menit terakhir.
+#- Pada form expression ketikkan: 100 - avg (irate(node_cpu_seconds_total{instance="10.X.X.20:9100",job="node-[username]",mode="idle"}[5m])) by (instance) * 100
+#- Klik button Execute
+#- Klik tab Graph. Centang stacked.
+#G> Full screenshot dan beri nama G-do-pro-G.png
+
+##9. Mendapatkan persentase penggunaan memory di podX-node0 dan podX-node1.
+#- Pada form expression ketikkan: (node_memory_MemTotal_bytes - (node_memory_MemFree_bytes + node_memory_Cached_bytes + node_memory_Buffers_bytes)) / node_memory_MemTotal_bytes * 100
+#- Klik button Execute
+#- Klik tab Graph. Centang stacked.
+#H> Full screenshot dan beri nama X-do-pro-H.png
+
+
+################
+##### Quiz #####
+################
+
+1. Tambahkan node MySql Exporter ke Prometheus Server sebagai target dengan job_name: 'mysql-docker-[username]'.
+2. Buatlah sembarang query untuk container MySql merujuk pada tautan (https://github.com/prometheus/mysqld_exporter).
+
+#I> Full screenshot hasil Query dan Graph MySql service pada docker container, Beri nama X-do-pro-I.png
+

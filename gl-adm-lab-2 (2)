@@ -1,0 +1,232 @@
+###########################
+##### Lab 2 - GL-ADM ######
+###########################
+
+#### Integrasi Gitlab dengan Heroku 2 ####
+#1. Buat project di gitlab
+Nama project : vuejs-heroku-[USERNAME] 
+Visibility Level : Public
+
+
+#2. Install Nodejs and npm
+sudo apt install npm nodejs -y
+
+
+#3. Setup npm
+npm install --global vue-cli
+vue init webpack [username-app]
+.....
+? Project name [username-app]
+? Project description A Vue.js project
+? Author Administrator <admin@example.com>
+? Vue build standalone
+? Install vue-router? Yes
+? Use ESLint to lint your code? Yes
+? Pick an ESLint preset Standard
+? Set up unit tests No
+? Setup e2e tests with Nightwatch? No
+? Should we run `npm install` for you after the project has been created? (recommended) npm
+.....
+
+cd [username-app]
+npm install express --save
+rm -rf node_modules
+git init
+
+#J> Screenshot hasil dari npm install --global vue-cli. Beri nama X-gl-adm-J.png
+
+## remove file line dist on .gitignore
+## change variable start: "npm run dev" on package.json to start: "node server.js"
+
+
+#3. Buat file pendukung
+# server.js
+vi server.js
+
+var express = require('express');
+var path = require('path');
+var serveStatic = require('serve-static');
+app = express();
+app.use(serveStatic(__dirname + "/dist"));
+var port = process.env.PORT || 3000;
+app.listen(port);
+console.log('server started '+ port);
+
+# .gitlab-ci.yml
+vi .gitlab-ci.yml
+
+image: node:8.10
+
+stages:
+  - build
+  - production
+    
+build:
+  type: build
+  script:
+    - npm install
+    - npm run build
+  only:
+    - master
+     
+deploy-production:
+  type: deploy
+  image: ruby:2.5.1
+  stage: production
+  only:
+    - master
+  environment:
+    name: production
+    url: https://$HEROKU_APP.$APP_DOMAIN  
+  script:
+    - apt-get update -qy
+    - apt-get install -y ruby ruby-dev rubygems-integration
+    - gem install dpl
+    - dpl --provider=heroku --app=$HEROKU_APP --api-key=$API_KEY
+
+# Edit file src/components/HelloWorld.vue
+vi src/components/HelloWorld.vue
+.....
+Welcome to Your Vue.js [USERNAME-X]
+.....
+
+
+#4. Buat App baru di heroku.com
+App Name : vuejs-[USERNAME-X]
+
+# Masuk ke https://dashboard.heroku.com/account
+# Pada bagian API Key, catat Token
+
+#5. Upload ke Gitlab
+# go to project setting CD/CD variables
+- HEROKU_APP = vuejs-[USERNAME-X]
+- APP_DOMAIN = heroku.com
+- API_KEY = [Token-Heroku]
+
+
+# Push file ke Gitlab
+git remote add origin git@Floating-IP:root/[PATH_REPO]
+git add .
+git commit -m "Initial commit"
+git push -u origin master
+
+
+# buka browser untuk melihat hasil
+http://vuejs-[USERNAME]-X.herokuapp.com
+
+#K> Screenshot akses hasil deployment Heroku. Beri nama X-gl-adm-K.png
+
+
+
+######## Integrasi Gitlab 3 #########
+
+#1. Buat project di Gitlab
+Nama project : node-easy-[USERNAME] 
+Visibility Level : Public
+
+#2. Clone Project
+git clone http://Floating-IP/[PATH_REPO]
+cd node-easy-[USERNAME]
+
+#2. Membuat Brach develop
+git checkout -b develop
+
+#3. Buat file tambahan
+# .gitlab-ci.yml
+vi .gitlab-ci.yml
+
+stages:
+  - compile
+  - deploy
+
+compile-express:
+  image: "node:8.10"
+  stage: compile
+  script:
+    - npm install
+  only:
+    - develop
+
+build-docker-image:
+  image: docker:latest
+  services:
+    - docker:dind
+  stage: deploy
+  environment: staging
+  variables:
+    CONTAINER_IMAGE: [username]/node-easy
+  script:
+    - 'ls'
+    - 'docker login -u $DOCKER_USER -p $DOCKER_PASSWORD docker.io'
+    - 'docker build -t $CONTAINER_IMAGE:latest .'
+    - 'docker push $CONTAINER_IMAGE:latest'   
+  only:
+    - develop
+
+### username disesuaikan dengan username yang ada di docker hub ###
+
+# Dockerfile
+vi Dockerfile
+
+FROM node:8.10
+
+WORKDIR /app
+ADD . .
+RUN npm install
+
+EXPOSE 3000
+CMD ["node", "index"]
+
+# docker-compose.yml
+vi docker-compose.yml
+
+version: '3'
+services:
+  app:
+    image: [username]/node-easy:latest
+    hostname: node-easy
+    container_name: node-easy
+    volumes:
+      - ./node-easy
+    ports:
+      - "3000:3000"
+
+# index.js
+vi index.js
+
+let express = require('express')
+let app = express();
+var port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Hello Batch 09'));
+app.listen(port, function () {
+     console.log("Running RestHub on port " + port);
+});
+
+# buat file package.json
+
+npm init
+
+# generate module npm
+
+npm install express --save
+
+
+#4. Push ke GitLab
+git add .
+git commit -m "[USERNAME-X] - First Commit"
+git push origin develop
+
+
+#L> Verifikasi http://Floating-IP/[PATH_REPO]/-/jobs/xxxxxxxxx Job succeeded. Beri nama X-gl-adm-L.png
+#M> Screenshot laman image kalian di https://hub.docker.com/. Beri nama X-do-adm-M.png
+
+##### Quiz #####
+1. Buat branch baru dengan nama feature-projec-X dari branch develop.
+2. Edit file index.js agar output menjadi "Hello Batch 13 - [USERNAME-X]".
+3. Edit file .gitlab-ci.yml agar hasil push di hub.docker bisa terdeliver di podx-node1.
+4. Lakukan merge dari branch feature-projec-X push ke brach develop.
+
+
+#N> Screenshot isi dari file .gitlab-ci.yml. Beri nama X-gl-adm-N.png
+#O> Verifikasi bahwa merge request dari feature-projec-X ke develop sudah sesuai. Beri nama X-gl-adm-O.png
+#P> Verifikasi di podx-node1 bahwa container sudah berjalan serta diakses via browser. Beri nama X-gl-adm-P.png

@@ -1,0 +1,734 @@
+############################################
+##### Lab 2 - TERRAFORM ADMINISTRATION #####
+############################################
+
+##### Instruksi Environment Lab #####
+
+0. Saat ada X maka ubah ke nomor absen anda
+1. Saat ada [username] maka ubah ke username anda
+
+##################
+# Install Docker #
+##################
+
+*** Executed on podX-docker ***
+
+##1. Install
+
+sudo su
+apt update
+apt-get install apt-transport-https ca-certificates gnupg-agent software-properties-common
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+apt-key fingerprint 0EBFCD88
+
+add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+apt update
+apt-get install docker-ce docker-ce-cli containerd.io
+
+docker info
+docker run hello-world
+
+##2. Export Docker API
+cp /lib/systemd/system/docker.service /lib/systemd/system/docker.service.backup
+vi /lib/systemd/system/docker.service
+
+# Find this:
+...
+ExecStart=/usr/bin/dockerd -H fd://
+...
+
+# then replace it with:
+...
+ExecStart=/usr/bin/dockerd -H tcp://0.0.0.0:2376 -H fd:// --containerd=/run/containerd/containerd.sock
+...
+
+##3. Restart Docker
+
+systemctl daemon-reload
+systemctl restart docker
+systemctl status docker
+
+#L>> Screenshot status docker. Beri nama X-tf-adm-L.png
+
+##########################
+# Deploy Nginx Container #
+##########################
+
+*** Executed on podX-terraform ***
+
+##1. Create folder
+
+mkdir -p /latihan/5
+cd /latihan/5
+
+##2. Create file: provider.tf
+
+vi provider.tf
+
+...
+provider "docker" {
+  host = "tcp://IP_podX-docker:2376/"
+}
+...
+
+##3. Create file: container.tf
+
+vi container.tf
+
+...
+resource "docker_image" "nginx" {
+  name = "nginx"
+}
+
+resource "docker_container" "nginx" {
+  name = "[USERNAME]-nginx-01"
+  image = docker_image.nginx.latest
+}
+...
+
+##4. Apply
+
+terraform init
+terraform validate
+terraform providers
+terraform plan
+terraform apply
+terraform show
+
+# check on podX-docker
+
+docker images
+docker ps
+
+#M>> Screenshot verifikasi container docker sudah berjalan. Beri nama X-tf-adm-M.png
+
+##5. Destroy
+
+terraform destroy
+
+########################################
+# Deploy nginx container - Expose Port #
+########################################
+
+*** Executed on podX-terraform ***
+
+##1. Create folder
+
+mkdir -p /latihan/6
+cd /latihan/6
+cp /latihan/5/provider.tf .
+
+##2. Create file: container.tf
+
+vi container.tf
+
+...
+resource "docker_image" "nginx" {
+  name = "nginx"
+}
+
+resource "docker_container" "nginx" {
+  name = "[USERNAME]-nginx-02"
+  image = docker_image.nginx.latest
+
+  ports {
+    internal = 80
+    external = 8080
+  }
+}
+...
+
+##3. Apply
+
+terraform init
+terraform validate
+terraform providers
+terraform plan
+terraform apply
+terraform show
+
+##4. Access container service
+
+curl http://IP_podX-docker:8080 -i
+
+#N>> Screenshot hasil akses container service. Beri nama X-tf-adm-N.png
+
+##5. Destroy
+
+terraform destroy
+
+########################################
+# Deploy httpd container - File Upload #
+########################################
+
+#################################
+# Run a container - File Upload #
+#################################
+
+*** Executed on podX-terraform ***
+
+##1. Create folder
+
+mkdir -p /latihan/7
+cd /latihan/7
+cp /latihan/6/provider.tf .
+mkdir file
+
+##2. Create file: index.html
+
+vi file/index.html
+
+...
+Hello, I am [username]
+...
+
+##3. Create file: container.tf
+
+vi container.tf
+
+...
+resource "docker_image" "httpd" {
+  name = "httpd"
+}
+
+resource "docker_container" "httpd" {
+  name = "[USERNAME]-nginx-01"
+  image = docker_image.httpd.latest
+
+  ports {
+    internal = 80
+    external = 8181
+  }
+
+  upload {
+    content = file("./file/index.html")
+    file = "/usr/local/apache2/htdocs/index.html"
+  }
+}
+...
+
+##4. Apply
+
+terraform init
+terraform validate
+terraform providers
+terraform plan
+terraform apply
+terraform show
+
+##5. Access container service
+
+curl http://IP_podX-docker:8181 -i
+
+#O>> Screenshot hasil curl ke port 8181 . Beri nama X-tf-adm-O.png
+
+##6. Destroy
+
+terraform destroy
+
+
+#############################################
+# Multiple Provider Deployment with Modules #
+#############################################
+
+*** Executed on podX-terraform ***
+
+mkdir -p /latihan/8
+cd /latihan/8
+cp /latihan/7/provider.tf .
+mkdir file
+cp /latihan/4/file/id_rsa file
+mkdir modules
+mkdir modules/db 
+mkdir modules/flask
+
+##1. Create file: provider.tf
+
+vi provider.tf
+...
+provider "openstack" {
+  user_name   = "CHANGE ME WITH YOUR USERNAME"
+  tenant_name = "CHANGE ME WITH YOUR USERNAME"
+  password    = "CHANGE ME WITH YOUR PASSWORD"
+  auth_url    = "http://lab0.nolsatu.id:5000"
+  domain_name = "default"
+}
+
+provider "docker" {
+  host = "tcp://IP_podX-docker:2376/"
+}
+...
+
+##2. Create file: variable.tf
+
+vi variable.tf
+...
+variable "instance_db_name" {		/
+  default = "[USERNAME]_flask_db"
+}
+
+variable "instance_db_ip" {
+  default = "10.X.X.110"
+}
+
+variable "mysql_host" {
+  default = "10.X.X.110"
+}
+
+variable "mysql_port" {
+  default = "3306"
+}
+
+variable "mysql_username" {
+  default = "user_db"
+}
+
+variable "mysql_password" {
+  default = "rahasia"
+}
+
+variable "mysql_database" {
+  default = "pendekar"
+}
+
+variable "docker_container_name" {
+  default = "[USERNAME]_flask_api"
+}
+
+variable "image" {
+  default = "ubuntu-18.04-server-cloudimg-amd64"
+}
+
+variable "private_key_path" {
+  default = "./file/id_rsa"
+}
+
+variable "flavor" {
+  default = "ns.2-2-20"
+}
+
+variable "keypair" {
+  default = "CHANGE ME WITH YOUR KEYPAIR"
+}
+
+variable "network" {
+  default = "CHANGE ME WITH YOUR INTERNAL NETWORK ID"
+}
+...
+
+##3. modules db main.tf , variable.tf & output.tf
+
+vi modules/db/variable.tf
+
+...
+variable "instance_int_address" {
+  description = "The name to use for all the cluster resources"
+  type        = string
+}
+
+variable "instance_name" {
+  description = "The name to use for all the cluster resources"
+  type        = string
+}
+
+variable "instance_flavor" {
+  description = "instance flavor"
+  type        = string
+}
+
+variable "instance_image" {
+  description = "instance image"
+  type        = string
+}
+
+variable "instance_keypair" {
+  description = "instance keypair"
+  type        = string
+}
+
+variable "network_id" {
+  description = "network id"
+  type        = string
+}
+
+variable "private_key_path" {
+  description = "private key path"
+  type        = string
+}
+
+
+variable "mysql_username" {
+  description = "Mariadb User"
+  type        = string
+}
+
+
+variable "mysql_password" {
+  description = "Mariadb Password"
+  type        = string
+}
+
+variable "mysql_database" {
+  description = "Mariadb Database"
+  type        = string
+}
+
+...
+
+vi modules/db/main.tf
+
+...
+resource "openstack_compute_instance_v2" "instance" {
+  name             = var.instance_name
+  image_name       = var.instance_image
+  flavor_name      = var.instance_flavor
+  key_pair         = var.instance_keypair
+  security_groups  = ["default"]
+  network {
+    uuid = var.network_id
+    fixed_ip_v4 = var.instance_int_address
+  }
+}
+
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  pool  = "extnet"
+}
+
+resource "openstack_compute_floatingip_associate_v2" "floating_ip" {
+  floating_ip = openstack_networking_floatingip_v2.floating_ip.address
+  instance_id = openstack_compute_instance_v2.instance.id
+  provisioner "file" {
+    connection {
+      host     = openstack_networking_floatingip_v2.floating_ip.address
+      type     = "ssh"
+      user     = "ubuntu"
+      private_key = file(var.private_key_path)
+    }
+
+    source      = "/latihan/8/file/provisioning_db.sh"
+    destination = "/home/ubuntu/provisioning_db.sh"
+  }
+
+  provisioner "file" {
+    connection { 
+      host     = openstack_networking_floatingip_v2.floating_ip.address
+      type     = "ssh"
+      user     = "ubuntu"
+      private_key = file(var.private_key_path)
+    }
+
+    source      = "./file/pendekar.sql"
+    destination = "/home/ubuntu/pendekar.sql"
+  }
+
+  provisioner "remote-exec" {
+    connection {
+      host     = openstack_networking_floatingip_v2.floating_ip.address
+      type     = "ssh"
+      user     = "ubuntu"
+      private_key = file(var.private_key_path)
+    }
+
+    inline = [
+      "sudo apt-get -y update",
+      "sudo DEBIAN_FRONTEND=noninteractive apt -y install mariadb-server",
+      "sudo sed -i 's/127.0.0.1/0.0.0.0/g'  /etc/mysql/mariadb.conf.d/50-server.cnf",
+      "sudo systemctl restart mariadb",
+      "sed -i 's/username/${var.mysql_username}/g' /home/ubuntu/provisioning_db.sh", 
+      "sed -i 's/password/${var.mysql_password}/g' /home/ubuntu/provisioning_db.sh",
+      "sed -i 's/databasename/${var.mysql_database}/g' /home/ubuntu/provisioning_db.sh",
+      "sudo chmod +x /home/ubuntu/provisioning_db.sh",
+      "sudo bash /home/ubuntu/provisioning_db.sh",
+      "sudo rm -f /home/ubuntu/provisioning_db.sh"
+    ]
+  }
+}
+
+...
+
+vi modules/db/output.tf
+
+...
+output "instance_db_name" {
+  value       = "${openstack_compute_instance_v2.instance.*.name}"
+  description = "openstack instance name"
+}
+
+output "instance_db_floating_ip" {
+  value       = "${openstack_networking_floatingip_v2.floating_ip.*.address}"
+  description = "openstack instance floating ip"
+}
+...
+
+##4. modules flask main.tf , variable.tf & output.tf
+
+vi modules/flask/variable.tf
+...
+variable "docker_container_name" {
+  description = "docker container name"
+  type        = string
+}
+
+variable "mysql_host" {
+  description = "Mariadb Host"
+  type        = string
+}
+
+variable "mysql_port" {
+  description = "Mariadb Port"
+  type        = string
+}
+
+
+variable "mysql_username" {
+  description = "Mariadb User"
+  type        = string
+}
+
+variable "mysql_password" {
+  description = "Mariadb Password"
+  type        = string
+}
+
+variable "mysql_database" {
+  description = "Mariadb Database"
+  type        = string
+}
+...
+
+vi modules/flask/main.tf
+...
+resource "docker_image" "nolsatu_flask_mysql" {
+  name = "ilosaurus/nolsatu_flask_mysql"
+}
+
+resource "docker_container" "nolsatu_flask_mysql" {
+  name = var.docker_container_name
+  image = docker_image.nolsatu_flask_mysql.latest
+  env = ["db_username=${var.mysql_username}", "db_password=${var.mysql_password}","db_host=${var.mysql_host}", "db_port=${var.mysql_port}", "db_database=${var.mysql_database}"]
+  must_run="true"
+
+  ports {
+    internal = 5000
+    external = 5005
+  }
+}
+
+...
+
+vi modules/flask/output.tf
+...
+output "docker_container_name" {
+  value       = "${docker_container.nolsatu_flask_mysql.*.name}"
+  description = "Docker Container Name"
+}
+...
+
+##5. Create instance.tf  
+
+vi instance.tf
+...
+module "flask" {
+  source                 = "./modules/flask"
+  docker_container_name  = "${var.docker_container_name}"
+  mysql_host             = "${var.mysql_host}"
+  mysql_port             = "${var.mysql_port}"
+  mysql_username         = "${var.mysql_username}"
+  mysql_password         = "${var.mysql_password}"
+  mysql_database         = "${var.mysql_database}"
+}
+
+module "db" {
+  source                 = "./modules/db"
+  instance_flavor        = "${var.flavor}"
+  instance_image         = "${var.image}"
+  instance_keypair       = "${var.keypair}"
+  network_id             = "${var.network}"
+  instance_name          = "${var.instance_db_name}"
+  private_key_path       = "${var.private_key_path}"
+  mysql_username         = "${var.mysql_username}"
+  mysql_password         = "${var.mysql_password}"
+  mysql_database         = "${var.mysql_database}"
+  instance_int_address   = "${var.instance_db_ip}"
+}
+
+output "instance_db_name" {
+  value       = "${module.db.instance_db_name}"
+  description = "openstack instance name"
+}
+
+output "instance_db_floating_ip" {
+  value       = "${module.db.instance_db_floating_ip}"
+  description = "openstack instance floating ip"
+}
+
+output "docker_container_name" {
+  value       = "${module.flask.docker_container_name}"
+  description = "Docker Container Name"
+}
+...
+
+##6. Create provisioning files
+
+vi /latihan/8/file/provisioning_db.sh
+
+...
+#!/bin/bash
+sudo mysql -u root -e "CREATE USER 'username'@'%' IDENTIFIED BY 'password';"
+sudo mysql -u root -e "GRANT ALL ON *.* TO 'username'@'%';"
+sudo mysql -u root -e "flush privileges;"
+sudo mysql -u username -p'password' -e "create database databasename;"
+sudo mysql -u username -p'password' < /home/ubuntu/pendekar.sql
+sudo systemctl restart mariadb
+...
+
+##7. Apply
+
+terraform init
+terraform providers
+terraform validate
+terraform plan
+terraform apply
+terraform show
+
+##5. Access container service
+curl http://IP_podX-docker:5005 -i
+
+#P>> Screenshot hasil curl ke port 5005 . Beri nama X-tf-adm-P.png
+#Q>> Jalankan perintah terraform output kemudian screenshot dan beri nama X-tf-adm-Q.png
+
+##8. Destroy
+terraform destroy
+
+
+#############################################
+###      Deploy App to PaaS (Heroku)      ###
+#############################################
+
+## Buat akun di heroku, kemudian catat API_KEY di menu account setting.
+## [username][x][nolsatu] ->  peserta17nolsatu (contoh)
+*** Executed on podX-terraform ***
+apikey- 302d791d-93dc-4900-b30b-74c2dfd34431
+mridhohafidz12@gmail.com
+
+mkdir -p /latihan/9
+cd /latihan/9
+
+
+##1. Create file: provider.tf
+vi provider.tf
+...
+provider "heroku" {
+  email   = "EMAIL_ADDRESS"
+  api_key = "API_KEY_HEROKU"
+}
+...
+
+##2. Create file: main.tf
+vi main.tf
+...
+resource "heroku_app" "[username][x][nolsatu]" {
+  name = "[username][x][nolsatu]"
+  region = "us"
+}
+
+resource "heroku_build" "[username][x][nolsatu]" {
+  app = heroku_app.[username][x][nolsatu].name
+  buildpacks = ["https://github.com/heroku/heroku-buildpack-php"]
+
+  source = {
+    url = "https://github.com/ilosaurus/php-getting-started/archive/1.1.2.tar.gz"
+    version = "1.1.2"
+  }
+}
+...
+
+##3. Create file: output.tf
+vi output.tf
+...
+output "[username][x][nolsatu]" {
+  value = "https://${[username][x][nolsatu].name}.herokuapp.com"
+}
+...
+
+##4. Apply
+
+terraform init
+terraform providers
+terraform validate
+terraform plan
+terraform apply
+terraform show
+
+##5. Access Heroku App
+curl https://[username][x][nolsatu].herokuapp.com
+
+#Q>> Screenshot hasil curl  . Beri nama X-tf-adm-Q.png
+#R>> Screenshot https://[username][x][nolsatu].herokuapp.com via browser . Beri nama X-tf-adm-R.png
+#S>> Jalankan perintah terraform output kemudian screenshot dan beri nama X-tf-adm-S.png
+
+##8. Destroy
+terraform destroy
+
+
+############################################################
+#####                  Quiz Lab 2                      #####
+##### Deploy mysql instance and wordpress on docker   ######
+############################################################
+
+1. Buat direktori /latihan/quiz2/deploywordpress.
+2. Buat file provider untuk openstack dan docker.
+3. Buat terraform modules database untuk deploy instance database mysql dengan detail : 
+    - Address               : 10.X.X.120
+    - Image                 : ubuntu 18.04 
+    - Flavor                : ns.2.2.20
+    - Instance Name         : [USERNAME]-wordpress-db
+4. Buat terraform modules wordpress untuk deploy container wordpress di podX-docker dengan detail : 
+    - Docker Image          : wordpress
+    - Docker Container Name : [USERNAME]-wordpress
+    - Expose Port           : 8080
+5. Jadi satu kali deployment akan membuat 1 instance mysql di openstack dan 1 container di docker.
+6. Deployment harus menggunakan output, seperti pada latihan-latihan sebelumnya.
+7. Jika telah di lakukan verifikasi (akses & screenshot) hasil deployment sebaiknya di hapus.
+
+############################################################
+#####            Verifikasi Quiz Lab 2                ######
+#####  Deploy mysql instance and wordpress on docker  ######
+############################################################
+
+- Akses floating ip instance podX-docker:8080  via web browser kemudian screenshot dan beri nama quiz-lab-2-X-tf-adm-A.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploywordpress jalankan perintah terraform output kemudian screenshot dan beri nama quiz-lab-2-X-tf-adm-B.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploywordpress jalankan perintah terraform providers kemudian screenshot dan beri nama quiz-lab-2-X-tf-adm-C.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploywordpress jalankan perintah cat modules/db/main.tf kemudian screenshot dan beri nama quiz-lab-2-X-tf-adm-D.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploywordpress jalankan perintah cat modules/wordpress/main.tf kemudian screenshot dan beri nama quiz-lab-2-X-tf-adm-E.png.
+
+
+############################################################
+#####                  Quiz Lab 2                     ######
+#####        Deploy PHP app to docker & heroku        ######
+############################################################
+
+1. Buat direktori /latihan/quiz2/deploytoheroku.
+2. Buat file provider untuk heroku dan docker.
+3. Buat terraform modules php-docker untuk deploy php-app ke docker container dengan detail : 
+    - Docker Image          : ilosaurus/php-heroku
+    - Docker Container Name : [USERNAME]-php-heroku
+    - Expose Port           : 8001
+4. Buat terraform modules php-heroku untuk deploy ke heroku dengan detail : 
+    - Heroku App Name       : [USERNAME][x][nolsatuquiz]
+    - Heroku App Domain     : [USERNAME][x][nolsatuquiz].herokuapp.com
+5. Jadi satu kali deployment akan membuat  1 container di docker dan 1 app di heroku.
+6. Deployment harus menggunakan output, seperti pada latihan-latihan sebelumnya.
+7. Jika telah di lakukan verifikasi (akses & screenshot) hasil deployment sebaiknya di hapus.
+
+############################################################
+#####                  Quiz Lab 2                     ######
+#####  Verifikasi Deploy PHP app to docker & heroku   ######
+############################################################
+
+- Akses floating ip instance podX-docker:8001 via web browser kemudian screenshot dan beri nama quiz-lab-2-heroku-X-tf-adm-A.png.
+- Akses https://[USERNAME][x][nolsatuquiz].herokuapp.com via web browser kemudian screenshot dan beri nama quiz-lab-2-heroku-X-tf-adm-B.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploytoheroku jalankan perintah terraform output kemudian screenshot dan beri nama quiz-lab-2-heroku-X-tf-adm-C.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploytoheroku jalankan perintah terraform providers kemudian screenshot dan beri nama quiz-lab-2-heroku-X-tf-adm-D.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploytoheroku jalankan perintah cat modules/php-docker/main.tf kemudian screenshot dan beri nama quiz-lab-2-heroku-X-tf-adm-E.png.
+- Pada podX-terraform di direktori /latihan/quiz2/deploytoheroku jalankan perintah cat modules/php-heroku/main.tf kemudian screenshot dan beri nama quiz-lab-2-heroku-X-tf-adm-F.png.

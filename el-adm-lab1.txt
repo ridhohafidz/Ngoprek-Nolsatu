@@ -1,0 +1,370 @@
+################################################
+##### Lab 1 - ELASTIC STACK ADMINISTRATION #####
+################################################
+
+
+##### Instruksi Environment Lab #####
+
+0. Saat ada X maka ubah ke nomor absen anda
+1. Saat ada [username] maka ubah ke username anda
+2. Buat 3 instance dengan ketentuan sebagai berikut:
+   - podX-elk (OS: Ubuntu 18.04, Spesifikasi: vCPU 4 & vRAM 4GB, IP Address: 10.X.X.10)
+   - podX-client1 (OS: Ubuntu 18.04, Spesifikasi: vCPU 2 & vRAM 2GB, IP Address: 10.X.X.20)
+   - podX-client2 (OS: CentOS 7, Spesifikasi: vCPU 2 & vRAM 2GB, IP Address: 10.X.X.30)
+3. Screenshot yang dilaporkan wajib dalam bentuk full screen capture/page
+
+#A> Screenshot bagian Network Topology > Topology > Normal. Beri nama X-el-adm-A.png
+#B> Screenshot bagian Compute > Instances. Beri nama X-el-adm-B.png
+
+
+
+#################
+# ELASTICSEARCH #
+#################
+
+*** Eksekusi di vm podX-elk ***
+
+##1. Update
+
+apt -y update
+
+##2.  Instalasi OpenJDK
+
+sudo apt -y install openjdk-8-jdk
+java -version
+
+##3. Instalasi Elasticsearch
+
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
+apt -y install apt-transport-https
+echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | tee -a /etc/apt/sources.list.d/elastic-7.x.list
+apt -y update && apt -y install elasticsearch
+
+##4. Konfigurasi Elasticsearch
+
+cp /etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml.original
+vi /etc/elasticsearch/elasticsearch.yml
+
+...
+# baris ke 55
+network.host: localhost
+...
+
+##5. Aktifkan layanan Elasticsearch
+
+systemctl daemon-reload
+systemctl enable elasticsearch
+systemctl start elasticsearch
+systemctl status elasticsearch
+
+##6. Tes Elasticsearch
+
+netstat -tupln
+curl -XGET 'localhost:9200/?pretty'
+
+#C> Screenshot hasil curl di atas. Beri nama X-el-adm-C.png
+
+
+
+##########
+# KIBANA #
+##########
+
+*** Eksekusi di vm podX-elk ***
+
+##1. Instalasi Kibana
+
+apt -y install kibana
+
+##2. Konfigurasi dan integrasi Kibana dengan Elasticsearch
+
+cp /etc/kibana/kibana.yml /etc/kibana/kibana.yml.original
+vi /etc/kibana/kibana.yml
+
+...
+# baris ke 7
+server.host: "localhost"
+...
+
+##3. Aktifkan layanan Kibana
+
+systemctl enable kibana
+systemctl start kibana
+systemctl status kibana
+
+##4. Instalasi dan konfigurasi Nginx sebagai reverse proxy
+
+#- Instalasi nginx
+
+apt -y install nginx apache2-utils
+
+#- Konfigurasi nginx
+
+cp /etc/nginx/sites-available/default /etc/nginx/sites-available/default.original
+vi /etc/nginx/sites-available/default
+
+# Hapus semua config dan isi dengan berikut:
+...
+server {
+    listen 80;
+
+    server_name _;
+
+    auth_basic "Restricted Access";
+    auth_basic_user_file /etc/nginx/htpasswd.kibana;
+
+    location / {
+        proxy_pass http://localhost:5601;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+...
+
+#- Buat user dan password untuk login ke dashboard kibana:
+
+htpasswd -c /etc/nginx/htpasswd.kibana [username]
+
+#- Aktifkan layanan nginx:
+
+systemctl enable nginx
+systemctl restart nginx
+systemctl status nginx
+netstat -tupln
+
+
+##5. Akses dashboard Kibana
+
+# Tunnel ke ssh gateway
+# Gunakan browser dan akses alamat http://Floating_IP_VM_podX-elk
+
+#D> Screenshot dashboard Kibana. Beri nama X-el-adm-D.png
+
+
+
+############
+# LOGSTASH #
+############
+
+*** Eksekusi di vm podX-elk ***
+      
+##1. Instalasi Logstash
+
+apt -y install logstash
+
+##2. Konfigurasi Logstash
+
+vi /etc/logstash/conf.d/input-filebeat.conf
+
+# Membuat input untuk filebeat
+...
+input {
+  beats {
+    port => 5044
+  }
+}
+...
+
+vi /etc/logstash/conf.d/output-elasticsearch.conf
+
+# Membuat output ke elasticsearch
+...
+output {
+  elasticsearch {
+    hosts => ["localhost:9200"]
+    manage_template => false
+    index => "%{[fields][log_name]}_%{[agent][hostname]}_%{+YYYY.MM}"
+  }
+}
+...
+
+##4. Aktifkan layanan logstash
+
+systemctl enable logstash
+systemctl start logstash
+systemctl status logstash
+netstat -tupln
+
+
+
+############
+# FILEBEAT #
+############
+
+*** Eksekusi di vm podX-client1 & podX-client2 ***
+
+## Instalasi Filebeat di Ubuntu 18.04
+
+apt -y update
+
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | apt-key add -
+apt -y install apt-transport-https
+echo "deb https://artifacts.elastic.co/packages/7.x/apt stable main" | tee -a /etc/apt/sources.list.d/elastic-7.x.list
+apt -y update && apt -y install filebeat
+
+systemctl enable filebeat
+systemctl status filebeat
+
+## Instalasi Filebeat di CentOS 7
+
+yum -y update
+rpm --import https://packages.elastic.co/GPG-KEY-elasticsearch
+vi /etc/yum.repos.d/elastic.repo
+
+...
+[elastic-7.x]
+name=Elastic repository for 7.x packages
+baseurl=https://artifacts.elastic.co/packages/7.x/yum
+gpgcheck=1
+gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+enabled=1
+autorefresh=1
+type=rpm-md
+...
+
+yum -y install filebeat
+
+systemctl enable filebeat
+systemctl status filebeat
+
+
+
+###########################################
+# Studi Kasus 1: Mengirim log ke logstash #
+###########################################
+
+# Dalam contoh ini, file log /var/log/syslog (Ubuntu)
+# dan  /var/log/messages (CentOS) akan dikirim ke logstash
+
+*** Eksekusi di vm podX-elk ***
+
+##1. Konfigurasi Logstash
+
+# Membuat filter log
+
+vi /etc/logstash/conf.d/filter-syslog.conf
+
+...
+filter {
+  if [fields][log_name] == "syslog" {
+    mutate {
+      add_tag => [ "syslog" ]
+    }
+  }
+}
+...
+
+# Restart layanan Logstash
+
+systemctl restart logstash
+systemctl status logstash
+
+
+*** Eksekusi di vm podX-client1 & podX-client2 ***
+
+##2. Konfigurasi Filebeat
+
+mv /etc/filebeat/filebeat.yml /etc/filebeat/filebeat.yml.original
+vi /etc/filebeat/filebeat.yml
+
+# Config filebeat di vm podX-client1:
+
+...
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/syslog
+  fields:
+    log_name: syslog
+
+output.logstash:
+  hosts: ["IP_internal_VM_podX-elk:5044"]
+...
+
+# Config filebeat di vm podX-client2:
+
+...
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/messages
+  fields:
+    log_name: syslog
+
+output.logstash:
+  hosts: ["IP_internal_VM_podX-elk:5044"]
+...
+
+# Aktifkan layanan filebeat
+
+systemctl restart filebeat
+systemctl status filebeat
+
+
+*** Eksekusi di vm podX-elk ***
+
+##3. Melihat index log yang tersimpan di elk server
+
+curl http://localhost:9200/_cat/indices?v
+
+# Jika konfigurasi benar, ada 2 index dengan nama index: syslog_podX-client*
+
+#E> Screenshot hasil curl di atas. Beri nama X-el-adm-E.png
+
+##4. Dashboard Kibana
+
+# Tunnel ke ssh gateway.
+# Gunakan browser dan akses dashboard Kibana: http://Floating_IP_VM_podX-elk.
+# Klik Menu Management > Elasticsearch > Index Management
+
+#F> Screenshot halaman di atas. Beri nama X-el-adm-F.png
+
+# Membuat Index Pattern
+# Klik Menu Management -> Kibana -> Index Patterns
+# Klik Create Index Pattern
+# Index Pattern Name: syslog_*
+# Klik Next Step
+# Time Filter field name: @timestamp
+# Klik Create Index Pattern
+
+# Klik Menu Discover
+# Log dari vm podX-client1 & podX-client2 akan tampil di halaman tersebut
+
+##5. Mencari log
+
+# Klik Menu Discover
+# Pada form search ketikkan: log.file.path : "/var/log/syslog"
+# Klik Refresh
+
+# Klik Menu Discover
+# Pada form search ketikkan: tags : syslog
+# Klik Refresh
+
+#G> Screenshot hasil query di atas. Beri nama X-el-adm-G.png
+
+# Pada form search ketikkan: log.file.path : "/var/log/syslog" AND  host.name : "podX-client1"
+# Klik Refresh
+
+# Pada form search ketikkan: (log.file.path : "/var/log/syslog" OR log.file.path : "/var/log/syslog") AND message : "root"
+# Klik Refresh
+
+# Tips:
+# Untuk memudahkan pencarian log, pada form search
+# Klik Option > Turn on query features
+
+  # Silahkan di-explore secara mandiri.
+
+
+##### Quiz Lab 1 #####
+
+1. Install web server apache2 di vm podX-client1.
+2. Kirim dan simpan log access apache2 ke server ELK.
+3. Lakukan aktivitas akses web server tersebut dengan curl atau yang lain.
+4. Akses ke dashboard Kibana dan lakukan query: log.file.path : "/var/log/apache2/access.log"
+
+#H> Screenshot hasil query di atas. Beri nama X-el-adm-H.png

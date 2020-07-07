@@ -1,0 +1,847 @@
+############################################
+##### Lab 1 - TERRAFORM ADMINISTRATION #####
+############################################
+
+##### Instruksi Environment Lab #####
+
+0. Saat ada X maka ubah ke nomor absen anda
+1. Saat ada [username] maka ubah ke username anda
+2. Buat 2 instance dengan ketentuan sebagai berikut:
+   - podX-terraform (OS: Ubuntu 18.04, Spesifikasi: vCPU 2 & vRAM 2GB, IP Address: 10.X.X.10)
+   - podX-docker (OS: Ubuntu 18.04, Spesifikasi: vCPU 2 & vRAM 2GB, IP Address: 10.X.X.20)
+3. Screenshot yang dilaporkan wajib dalam bentuk full screen capture/page
+
+#A>> Screenshot bagian Network Topology > Topology > Normal. Beri nama X-tf-adm-A.png
+
+#####################
+# Install Terraform #
+#####################
+
+*** Executed on podX-terraform ***
+
+##1. Install
+
+sudo su
+cd ~
+apt-get update
+apt-get install unzip
+wget https://releases.hashicorp.com/terraform/0.12.24/terraform_0.12.24_linux_amd64.zip
+unzip terraform_0.12.24_linux_amd64.zip
+ls
+mv terraform /usr/local/bin/
+
+##2. Verify
+
+terraform
+terraform version
+
+mkdir -p /latihan/0
+cd /latihan/0
+
+##1. Create file: provider.tf
+
+vi provider.tf
+
+...
+provider "openstack" {
+  user_name   = "CHANGE ME WITH YOUR USERNAME"
+  tenant_name = "CHANGE ME WITH YOUR USERNAME"
+  password    = "CHANGE ME WITH YOUR PASSWORD"
+  auth_url    = "http://lab0.nolsatu.id:5000"
+  domain_name = "default"
+}
+...
+
+##2. Create file: instance.tf
+
+vi instance.tf
+
+...
+resource "openstack_compute_instance_v2" "instance" {
+  name = "USERNAME-INSTANCE00"
+  image_name       = "ubuntu-18.04-server-cloudimg-amd64"
+  flavor_name      = "ns.2-2-20"
+  key_pair         = "CHANGE ME WITH YOUR KEYPAIR"
+  security_groups  = ["default"]
+  network {
+    uuid = "CHANGE ME WITH YOUR INTERNAL NETWORK ID"
+  }
+}
+
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  pool = "extnet"
+}
+
+resource "openstack_compute_floatingip_associate_v2" "floating_ip" {
+  floating_ip = openstack_networking_floatingip_v2.floating_ip.address
+  instance_id = openstack_compute_instance_v2.instance.id
+}
+...
+
+##3. Apply
+
+terraform init
+terraform validate
+terraform providers
+terraform plan
+terraform apply
+terraform show
+
+#B>> Screenshot dari hasil terraform show. Beri nama X-tf-adm-B.png
+
+##4. Destroy
+terraform destroy
+
+###############################################
+# Create OpenStack Instance - Using Variable  #
+###############################################
+
+*** Executed on podX-terraform ***
+
+##0. Create folder
+
+mkdir -p /latihan/1
+cd /latihan/1
+cp /latihan/0/provider.tf .
+
+##1. Create file: varible.tf
+
+vi variable.tf
+
+...
+variable "name" {
+  default = "USERNAME-INSTANCE01"
+}
+
+variable "image" {
+  default = "ubuntu-18.04-server-cloudimg-amd64"
+}
+
+variable "flavor" {
+  default = "ns.2-2-20"
+}
+
+variable "keypair" {
+  default = "CHANGE ME WITH YOUR KEYPAIR"
+}
+
+variable "network" {
+  default = "CHANGE ME WITH YOUR INTERNAL NETWORK ID"
+}
+...
+
+
+##2. Create file: instance.tf
+
+vi instance.tf
+
+...
+resource "openstack_compute_instance_v2" "instance" {
+  name            = var.name
+  image_name      = var.image
+  flavor_name     = var.flavor
+  key_pair        = var.keypair
+  security_groups = ["default"]
+  network {
+    uuid = var.network
+  }
+}
+
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  pool = "extnet"
+}
+
+resource "openstack_compute_floatingip_associate_v2" "floating_ip" {
+  floating_ip = openstack_networking_floatingip_v2.floating_ip.address
+  instance_id = openstack_compute_instance_v2.instance.id
+}
+...
+
+##3. Apply
+
+terraform init
+terraform validate
+terraform providers
+terraform plan
+terraform apply
+terraform show
+
+#C>> Screenshot dari hasil terraform show. Beri nama X-tf-adm-C.png
+
+##4. Destroy
+terraform destroy
+
+
+#########################################################
+# Create OpenStack Instance - Using Variable With Count #
+#########################################################
+
+*** Executed on podX-terraform ***
+
+##0. Create folder
+
+mkdir -p /latihan/2
+cd /latihan/2
+cp /latihan/1/provider.tf .
+
+##1. Create file: varible.tf
+
+vi variable.tf
+
+...
+variable "total" {
+ default = 2 
+}
+
+variable "name" {
+  default = "YOUR-USERNAME-INSTANCE-"
+}
+
+variable "image" {
+  default = "ubuntu-18.04-server-cloudimg-amd64"
+}
+
+variable "flavor" {
+  default = "ns.2-2-20"
+}
+
+variable "keypair" {
+  default = "CHANGE ME WITH YOUR KEYPAIR"
+}
+
+variable "network" {
+  default = "CHANGE ME WITH YOUR INTERNAL NETWORK ID"
+}
+...
+
+##2. Create file: instance.tf
+
+vi instance.tf
+
+...
+resource "openstack_compute_instance_v2" "instance"  { 
+  count           = var.total
+  name            = "${var.name}-${count.index}"
+  image_name      = var.image
+  flavor_name     = var.flavor
+  key_pair        = var.keypair
+  security_groups = ["default"]
+  network {
+    uuid = var.network
+  }
+}
+
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  count = var.total
+  pool  = "extnet"
+}
+
+resource "openstack_compute_floatingip_associate_v2" "floating_ip" {
+  count       = var.total
+  floating_ip = element(openstack_networking_floatingip_v2.floating_ip.*.address, count.index)
+  instance_id = element(openstack_compute_instance_v2.instance.*.id, count.index)
+}
+...
+
+##3. Apply
+
+terraform init
+terraform validate
+terraform providers
+terraform plan
+terraform apply
+terraform show
+
+#D>> Screenshot dari hasil terraform show. Beri nama X-tf-adm-D.png
+#E>> Screenshot instance di dashboard openstack. Beri nama X-tf-adm-E.png
+
+##4. Destroy
+terraform destroy
+
+##########################################################
+# Create OpenStack Instance - Deploy Multiple Web Server #
+##########################################################
+
+*** Executed on podX-terraform ***
+
+##0. Create folder
+
+mkdir -p /latihan/3
+cd /latihan/3
+cp /latihan/2/provider.tf .
+
+##1. Create file: varible.tf
+
+vi variable.tf
+
+...
+variable "total" {
+ default = 2 
+}
+
+variable "name" {
+  default = "USERNAME-WEBSERVER-0"
+}
+
+variable "image" {
+  default = "ubuntu-18.04-server-cloudimg-amd64"
+}
+
+variable "flavor" {
+  default = "ns.2-2-20"
+}
+
+variable "keypair" {
+  default = "CHANGE ME WITH YOUR KEYPAIR"
+}
+
+variable "network" {
+  default = "CHANGE ME WITH YOUR INTERNAL NETWORK ID"
+}
+...
+
+##3 Copy private key (id_rsa)  ssh-gateway ke instance podX-terraform di direktori /latihan/3
+
+vim id_rsa
+...
+
+PASTE YOUR SSH-GATEWAY PRIVATE KEY 
+
+...
+
+##4. Create file: instance.tf
+
+vi instance.tf
+
+...
+resource "openstack_compute_instance_v2" "instance"  { 
+  count           = var.total
+  name            = "${var.name}${count.index}"
+  image_name      = var.image
+  flavor_name     = var.flavor
+  key_pair        = var.keypair
+  security_groups = ["default"]
+  network {
+    uuid = var.network
+  }
+}
+
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  count = var.total
+  pool  = "extnet"
+}
+
+resource "openstack_compute_floatingip_associate_v2" "floating_ip" {
+  count       = var.total
+  floating_ip = element(openstack_networking_floatingip_v2.floating_ip.*.address, count.index)
+  instance_id = element(openstack_compute_instance_v2.instance.*.id, count.index)
+  provisioner "remote-exec" {
+    connection {
+      host     = element(openstack_networking_floatingip_v2.floating_ip.*.address, count.index)
+      type     = "ssh"
+      user     = "ubuntu"
+      private_key = file("/latihan/3/id_rsa")
+    }
+
+    inline = [
+      "sudo apt-get -y update",
+      "sudo apt-get -y install nginx",
+      "sudo service nginx start",
+      "echo 'USERNAME-WEBSERVER-0${count.index + 1}' | sudo tee /var/www/html/index.html"
+    ]
+  }
+}
+
+
+output "instance-name" {
+  value       = openstack_compute_instance_v2.instance.*.name
+  description = "openstack instance name"
+}
+
+output "instance-floating-ip" {
+  value       = openstack_networking_floatingip_v2.floating_ip.*.address
+  description = "openstack instance floating ip"
+}
+
+...
+
+terraform init
+terraform validate
+terraform plan
+terraform apply
+terraform providers
+terraform output
+
+#F>> Screenshot dari hasil terraform providers; terraform output . Beri nama X-tf-adm-F.png
+
+curl [floating-ip-web-server-01]
+curl [floating-ip-web-server-02]
+
+#G>> Screenshot hasil curl. Beri nama X-tf-adm-G.png
+
+##5. Destroy
+terraform destroy
+
+#######################################################################
+# Create OpenStack Instance - Deploy Wordpress With External Database #
+#######################################################################
+
+*** Executed on podX-terraform ***
+
+##0. Create folder
+
+mkdir -p /latihan/4
+cd /latihan/4
+cp /latihan/3/provider.tf .
+mkdir /latihan/4/file
+mkdir /latihan/4/modules/db
+mkdir /latihan/4/modules/wordpress
+
+##1. Create file: varible.tf
+
+vi variable.tf
+
+...
+variable "instance_web_name" {
+  default = "YOUR-USERNAME_WORDPRESS"
+}
+
+variable "instance_db_name" {
+  default = "YOUR-USERNAME_MARIADB"
+}
+
+variable "instance_web_ip" {
+  default = "10.X.X.200"
+}
+
+variable "instance_db_ip" {
+  default = "10.X.X.100"
+}
+
+variable "mysql_host" {
+  default = "10.X.X.100"
+}
+
+variable "mysql_username" {
+  default = "user_db"
+}
+
+variable "mysql_password" {
+  default = "rahasia"
+}
+
+variable "mysql_database" {
+  default = "wordpress"
+}
+
+variable "private_key_path" {
+  default = "./file/id_rsa"
+}
+
+variable "image" {
+  default = "ubuntu-18.04-server-cloudimg-amd64"
+}
+
+variable "flavor" {
+  default = "ns.2-2-20"
+}
+
+variable "keypair" {
+  default = "CHANGE ME WITH YOUR KEYPAIR"
+}
+
+variable "network" {
+  default = "CHANGE ME WITH YOUR INTERNAL NETWORK ID"
+}
+...
+
+##3 Copy private key (id_rsa)  ssh-gateway ke instance podX-terraform di direktori /latihan/4/file
+
+vim /latihan/4/file/id_rsa
+...
+PASTE YOUR SSH-GATEWAY PRIVATE KEY 
+...
+
+##4. Create modules db files
+## Create file: /latihan/4/modules/db/main.tf
+
+vi /latihan/4/modules/db/main.tf
+...
+resource "openstack_compute_instance_v2" "instance" {
+  name             = var.instance_name
+  image_name       = var.instance_image
+  flavor_name      = var.instance_flavor
+  key_pair         = var.instance_keypair
+  security_groups  = ["default"]
+  network {
+    uuid = var.network_id
+    fixed_ip_v4 = var.instance_int_address
+  }
+}
+
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  pool  = "extnet"
+}
+
+resource "openstack_compute_floatingip_associate_v2" "floating_ip" {
+  floating_ip = openstack_networking_floatingip_v2.floating_ip.address
+  instance_id = openstack_compute_instance_v2.instance.id
+  provisioner "file" {
+    connection {
+      host     = openstack_networking_floatingip_v2.floating_ip.address
+      type     = "ssh"
+      user     = "ubuntu"
+      private_key = file(var.private_key_path)
+    }
+
+    source      = "./file/provisioning_db.sh"
+    destination = "/home/ubuntu/provisioning_db.sh"
+  }
+
+  provisioner "remote-exec" {
+    connection {
+      host     = openstack_networking_floatingip_v2.floating_ip.address
+      type     = "ssh"
+      user     = "ubuntu"
+      private_key = file(var.private_key_path)
+    }
+
+    inline = [
+      "sudo apt-get -y update",
+      "sudo DEBIAN_FRONTEND=noninteractive apt -y install mariadb-server",
+      "sudo sed -i 's/127.0.0.1/0.0.0.0/g'  /etc/mysql/mariadb.conf.d/50-server.cnf",
+      "sudo systemctl retart mariadb",
+      "sed -i 's/username/${var.mysql_username}/g' /home/ubuntu/provisioning_db.sh", 
+      "sed -i 's/password/${var.mysql_password}/g' /home/ubuntu/provisioning_db.sh",
+      "sed -i 's/databasename/${var.mysql_database}/g' /home/ubuntu/provisioning_db.sh",
+      "sudo chmod +x /home/ubuntu/provisioning_db.sh",
+      "sudo bash /home/ubuntu/provisioning_db.sh",
+      "sudo rm -f /home/ubuntu/provisioning_db.sh"
+    ]
+  }
+}
+...
+
+## Create file: /latihan/4/modules/db/variable.tf
+
+vi /latihan/4/modules/db/variable.tf
+...
+variable "instance_int_address" {
+  description = "instance internal address"
+  type        = string
+}
+
+variable "instance_name" {
+  description = "instance name"
+  type        = string
+}
+
+variable "instance_flavor" {
+  description = "instance flavor"
+  type        = string
+}
+
+variable "instance_image" {
+  description = "instance image"
+  type        = string
+}
+
+variable "instance_keypair" {
+  description = "instance keypair"
+  type        = string
+}
+
+variable "network_id" {
+  description = "network id"
+  type        = string
+}
+
+variable "private_key_path" {
+  description = "private key path"
+  type        = string
+}
+
+variable "mysql_username" {
+  description = "Mariadb User"
+  type        = string
+}
+
+variable "mysql_password" {
+  description = "Mariadb Password"
+  type        = string
+}
+
+variable "mysql_database" {
+  description = "Mariadb Database"
+  type        = string
+}
+...
+
+## Create file: /latihan/4/modules/db/output.tf
+
+vi /latihan/4/modules/db/output.tf
+
+...
+output "instance_db_name" {
+  value       = "${openstack_compute_instance_v2.instance.*.name}"
+  description = "openstack instance name"
+}
+
+output "instance_db_floating_ip" {
+  value       = "${openstack_networking_floatingip_v2.floating_ip.*.address}"
+  description = "openstack instance floating ip"
+}
+...
+
+
+
+##5. Create modules wordpress files
+## Create file: /latihan/4/modules/wordpress/main.tf
+
+vi /latihan/4/modules/wordpress/main.tf
+
+...
+resource "openstack_compute_instance_v2" "instance" {
+  name             = var.instance_name
+  image_name       = var.instance_image
+  flavor_name      = var.instance_flavor
+  key_pair         = var.instance_keypair
+  security_groups  = ["default"]
+  network {
+    uuid = var.network_id
+    fixed_ip_v4 = var.instance_int_address
+  }
+}
+
+resource "openstack_networking_floatingip_v2" "floating_ip" {
+  pool  = "extnet"
+}
+
+resource "openstack_compute_floatingip_associate_v2" "floating_ip" {
+  floating_ip = openstack_networking_floatingip_v2.floating_ip.address
+  instance_id = openstack_compute_instance_v2.instance.id
+
+  provisioner "remote-exec" {
+    connection {
+      host     = openstack_networking_floatingip_v2.floating_ip.address
+      type     = "ssh"
+      user     = "ubuntu"
+      private_key = file(var.private_key_path)
+    }
+
+    inline = [
+      "sudo apt -y update",
+      "sudo DEBIAN_FRONTEND=noninteractive apt -y upgrade && sudo  apt -y autoremove",
+      "sudo sleep 10",
+      "sudo apt -y install unzip zip wget",
+      "sudo apt install -y apache2",
+      "sudo apt install -y php7.2 php7.2-mysql libapache2-mod-php",
+      "sudo apt -y install php libapache2-mod-php apache2 mariadb-client zip unzip wget",
+      "sudo wget https://wordpress.org/latest.zip",
+      "sudo unzip latest.zip",
+      "sudo  mv wordpress/* /var/www/html/",
+      "sudo mv /var/www/html/wp-config-sample.php /var/www/html/wp-config.php",
+      "sudo rm -f /var/www/html/index.html",
+      "sudo sed -i 's/database_name_here/${var.mysql_database}/g' /var/www/html/wp-config.php",
+      "sudo sed -i 's/username_here/${var.mysql_username}/g' /var/www/html/wp-config.php",
+      "sudo sed -i 's/password_here/${var.mysql_password}/g' /var/www/html/wp-config.php",
+      "sudo sed -i 's/localhost/${var.mysql_host}/g' /var/www/html/wp-config.php"
+    ]
+  }
+}
+
+...
+
+## Create file: /latihan/4/modules/wordpress/variable.tf
+
+vi /latihan/4/modules/wordpress/variable.tf
+...
+variable "instance_int_address" {
+  description = "The name to use for all the cluster resources"
+  type        = string
+}
+
+variable "instance_name" {
+  description = "The name to use for all the cluster resources"
+  type        = string
+}
+
+variable "instance_flavor" {
+  description = "instance flavor"
+  type        = string
+}
+
+variable "instance_image" {
+  description = "instance image"
+  type        = string
+}
+
+variable "instance_keypair" {
+  description = "instance keypair"
+  type        = string
+}
+
+variable "network_id" {
+  description = "network id"
+  type        = string
+}
+
+variable "private_key_path" {
+  description = "private key path"
+  type        = string
+}
+
+
+variable "mysql_host" {
+  description = "Mariadb Host"
+  type        = string
+}
+
+
+variable "mysql_username" {
+  description = "Mariadb User"
+  type        = string
+}
+
+
+variable "mysql_password" {
+  description = "Mariadb Password"
+  type        = string
+}
+
+variable "mysql_database" {
+  description = "Mariadb Database"
+  type        = string
+}
+...
+
+## Create file: /latihan/4/modules/wordpress/output.tf
+
+vi /latihan/4/modules/wordpress/output.tf
+
+...
+output "instance_wordpress_name" {
+  value       = "${openstack_compute_instance_v2.instance.*.name}"
+  description = "openstack instance name"
+}
+
+output "instance_wordpress_floating_ip" {
+  value       = "${openstack_networking_floatingip_v2.floating_ip.*.address}"
+  description = "openstack instance floating ip"
+}
+...
+
+
+##6. Create provisioning files
+
+vi /latihan/4/file/provisioning_db.sh
+
+...
+#!/bin/bash
+sudo mysql -u root -e "CREATE USER 'username'@'%' IDENTIFIED BY 'password';"
+sudo mysql -u root -e "GRANT ALL ON *.* TO 'username'@'%';"
+sudo mysql -u root -e "flush privileges;"
+sudo mysql -u username -p'password' -e "create database databasename;"
+sudo systemctl restart mariadb
+...
+
+##7. Create instance.tf
+
+vi /latihan/4/instance.tf
+
+...
+module "wordpress" {
+  source               = "./modules/wordpress"
+  instance_name        = "${var.instance_web_name}"
+  instance_flavor      = "${var.flavor}"
+  instance_image       = "${var.image}"
+  instance_keypair     = "${var.keypair}"
+  network_id           = "${var.network}"
+  private_key_path     = "${var.private_key_path}"
+  mysql_host           = "${var.mysql_host}"
+  mysql_username       = "${var.mysql_username}"
+  mysql_password       = "${var.mysql_password}"
+  mysql_database       = "${var.mysql_database}"
+  instance_int_address = "${var.instance_web_ip}"
+}
+
+module "db" {
+  source               = "./modules/db"
+  instance_flavor      = "${var.flavor}"
+  instance_image       = "${var.image}"
+  instance_keypair     = "${var.keypair}"
+  network_id           = "${var.network}"
+  instance_name        = "${var.instance_db_name}"
+  private_key_path     = "${var.private_key_path}"
+  mysql_username       = "${var.mysql_username}"
+  mysql_password       = "${var.mysql_password}"
+  mysql_database       = "${var.mysql_database}"
+  instance_int_address = "${var.instance_db_ip}"
+}
+
+output "instance_db_name" {
+  value       = "${module.db.instance_db_name}"
+  description = "openstack instance name"
+}
+
+output "instance_db_floating_ip" {
+  value       = "${module.db.instance_db_floating_ip}"
+  description = "openstack instance floating ip"
+}
+
+output "instance_wordpress_name" {
+  value       = "${module.wordpress.instance_wordpress_name}"
+  description = "openstack instance name"
+}
+
+output "instance_wordpress_floating_ip" {
+  value       = "${module.wordpress.instance_wordpress_floating_ip}"
+  description = "openstack instance floating ip"
+}
+...
+
+terraform init
+terraform validate
+terraform plan
+terraform apply
+terraform_providers; terraform output
+
+#J>> Screenshot output dari perintah terraform providers; terraform output; . Beri nama X-tf-adm-J.png
+#K>> Akses floating ip instance web wordpress via browser kemudian Screenshot dan beri nama X-tf-adm-K.png
+
+############################################################
+#####                  Quiz Lab 1                      #####
+##### Deploy Haproxy load balancer dengan 2 webserver ######
+############################################################
+
+1. Buat direktori /latihan/quiz1/deployhaproxy.
+2. Buat file provider untuk openstack.
+3. Buat terraform modules haproxy untuk deploy haproxy dengan detail : 
+    - Address       : 10.X.X.50
+    - Image         : ubuntu 18.04 
+    - Flavor        : ns.2.2.20
+    - Instance Name : [USERNAME]-haproxy
+4. Buat terraform modules webserver01 untuk deploy webserver dengan detail : 
+    - Address       : 10.X.X.51
+    - Image         : ubuntu 18.04 
+    - Flavor        : ns.2.2.20
+    - Instance Name : [USERNAME]-webserver01
+5. Buat terraform modules webserver02 untuk deploy webserver dengan detail : 
+    - Address       : 10.X.X.52
+    - Image         : centOS 7
+    - Flavor        : ns.2.2.20
+    - Instance Name : [USERNAME]-webserver02
+6. Jadi satu kali deployment akan membuat 3 instance (1 lb dan 2 webserver).
+7. Edit dan tuliskan username di index.html masing-masing webserver, contoh di index.html instance webserver01 ketika di curl outputnya adalah 'username-webserver01' .
+8. Deployment harus menggunakan output, seperti pada latihan-latihan sebelumnya.
+
+############################################################
+#####            Verifikasi Quiz Lab 1                 #####
+############################################################
+
+- Akses floating ip instance [USERNAME]-haproxy via ssh-gateway dan jalankan perintah while true; do sleep 1; curl http://FLOATING-IP-HAPROXY;done kemudian screenshot dan beri nama quiz-lab-1-X-tf-adm-A.png.
+- Pada podX-terraform di direktori /latihan/quiz1/deployhaproxy jalankan perintah terraform output kemudian screenshot dan beri nama quiz-lab-1-X-tf-adm-B.png.
+- Pada podX-terraform di direktori /latihan/quiz1/deployhaproxy jalankan perintah terraform providers kemudian screenshot dan beri nama quiz-lab-1-X-tf-adm-C.png.
+- Pada podX-terraform di direktori /latihan/quiz1/deployhaproxy jalankan perintah cat modules/haproxy/main.tf kemudian screenshot dan beri nama quiz-lab-1-X-tf-adm-D.png.
+- Pada podX-terraform di direktori /latihan/quiz1/deployhaproxy jalankan perintah cat modules/webserver01/main.tf kemudian screenshot dan beri nama quiz-lab-1-X-tf-adm-E.png.
+- Pada podX-terraform di direktori /latihan/quiz1/deployhaproxy jalankan perintah cat modules/webserver02/main.tf kemudian screenshot dan beri nama quiz-lab-1-X-tf-adm-F.png.

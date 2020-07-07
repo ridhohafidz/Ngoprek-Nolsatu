@@ -1,0 +1,630 @@
+########################################
+##### Lab 1 - ENVOY ADMINISTRATION #####
+########################################
+
+##### Instruksi Environment Lab #####
+
+0. Saat ada X maka ubah ke nomor absen anda
+1. Saat ada [username] maka ubah ke username anda
+2. Buat 1 instance dengan ketentuan sebagai berikut:
+   - podX-envoy (OS: Ubuntu 16.04, Spesifikasi: vCPU 4 & vRAM 4GB, IP Address: 10.X.X.100)
+
+3. Screenshot yang dilaporkan wajib dalam bentuk full screen capture/page
+
+#A> Screenshot bagian Network Topology > Topology > Normal. Beri nama X-ev-adm-A.png
+#B> Screenshot bagian Compute > Instances. Beri nama X-ev-adm-B.png
+
+##### Install Docker #####
+sudo apt update
+sudo apt install docker.io
+
+sudo curl -L "https://github.com/docker/compose/releases/download/1.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+
+###############################################
+##### Forward Traffic to External Website #####
+###############################################
+
+#1 Create Envoy Configuration File
+mkdir external_envoy
+cd external_envoy
+
+vim envoy.yaml
+
+...
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 10000 }
+
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: local_service
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/" }
+                route: { host_rewrite: www.btech.id, cluster: service_btech }
+          http_filters:
+          - name: envoy.router
+
+  clusters:
+  - name: service_btech
+    connect_timeout: 0.25s
+    type: LOGICAL_DNS
+    dns_lookup_family: V4_ONLY
+    lb_policy: ROUND_ROBIN
+    hosts: [{ socket_address: { address: btech.id, port_value: 443 }}]
+    tls_context: { sni: www.btech.id }
+
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address: { address: 0.0.0.0, port_value: 9901 }
+...
+
+#3 Pull Envoy image
+docker pull envoyproxy/envoy:v1.14.1
+
+#2 Run Envoy
+sudo docker run --name=proxy -d -p 8008:10000 -p 9901:9901 -v $(pwd)/envoy.yaml:/etc/envoy/envoy.yaml envoyproxy/envoy:v1.14.1
+
+pakai yg ini saya~:)
+docker run --name=proxy -d -p 8008:10000 -p 9901:9901 envoyproxy/envoy:v1.14.1
+
+#3 Open Envoy
+http://FLOATING_IP:8008/
+#C> Screenshot Web, Beri nama X-ev-adm-C.png
+
+#4 Stop Docker
+sudo docker ps 
+sudo docker kill proxy
+sudo docker rm proxy
+cd ~
+
+################################################
+##### forward traffic to Docker Containers #####
+################################################
+
+#1 Create Folder
+mkdir front_proxy
+cd front_proxy
+
+#2 Create Docker Compose
+vim docker-compose.yml
+
+...
+version: '2'
+services:
+
+  front-envoy:
+    build:
+      context: .
+      dockerfile: Dockerfile-frontenvoy
+    volumes:
+      - ./front-envoy.yaml:/etc/front-envoy.yaml
+    networks:
+      - envoymesh
+    expose:
+      - "80"
+      - "8001"
+    ports:
+      - "80:80"
+      - "8001:8001"
+
+  service1:
+    build:
+      context: .
+      dockerfile: Dockerfile-service
+    volumes:
+      - ./service-envoy.yaml:/etc/service-envoy.yaml
+    networks:
+      envoymesh:
+        aliases:
+          - service1
+    environment:
+      - SERVICE_NAME=1
+    expose:
+      - "80"
+
+  service2:
+    build:
+      context: .
+      dockerfile: Dockerfile-service
+    volumes:
+      - ./service-envoy.yaml:/etc/service-envoy.yaml
+    networks:
+      envoymesh:
+        aliases:
+          - service2
+    environment:
+      - SERVICE_NAME=2
+    expose:
+      - "80"
+
+networks:
+  envoymesh: {}
+...
+
+
+#3 Create Dockerfile for frontenvoy
+vim Dockerfile-frontenvoy
+...
+FROM envoyproxy/envoy:v1.14.1
+
+RUN apt-get update && apt-get -q install -y curl
+CMD /usr/local/bin/envoy -c /etc/front-envoy.yaml --service-cluster front-proxy
+...
+
+
+#4 Create front-envoy configuration
+vim front-envoy.yaml
+
+...
+static_resources:
+  listeners:
+  - address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 80
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          codec_type: auto
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains:
+              - "*"
+              routes:
+              - match:
+                  prefix: "/service/1"
+                route:
+                  cluster: service1
+              - match:
+                  prefix: "/service/2"
+                route:
+                  cluster: service2
+          http_filters:
+          - name: envoy.router
+            config: {}
+  clusters:
+  - name: service1
+    connect_timeout: 0.25s
+    type: strict_dns
+    lb_policy: round_robin
+    http2_protocol_options: {}
+    hosts:
+    - socket_address:
+        address: service1
+        port_value: 80
+  - name: service2
+    connect_timeout: 0.25s
+    type: strict_dns
+    lb_policy: round_robin
+    http2_protocol_options: {}
+    hosts:
+    - socket_address:
+        address: service2
+        port_value: 80
+admin:
+  access_log_path: "/dev/null"
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8001
+...
+
+
+#5 Create Dockerfile for service
+vim Dockerfile-service
+
+...
+FROM envoyproxy/envoy-alpine:v1.14.1
+
+RUN apk update && apk add python3 bash
+RUN pip3 install -q Flask==0.11.1 requests==2.18.4
+RUN mkdir /code
+ADD ./service.py /code
+ADD ./start_service.sh /usr/local/bin/start_service.sh
+RUN chmod u+x /usr/local/bin/start_service.sh
+ENTRYPOINT /usr/local/bin/start_service.sh
+...
+
+
+#6 Create service.py start_service.sh
+vim service.py
+
+...
+from flask import Flask
+from flask import request
+import socket
+import os
+import sys
+import requests
+
+app = Flask(__name__)
+
+TRACE_HEADERS_TO_PROPAGATE = [
+    'X-Ot-Span-Context',
+    'X-Request-Id',
+
+    # Zipkin headers
+    'X-B3-TraceId',
+    'X-B3-SpanId',
+    'X-B3-ParentSpanId',
+    'X-B3-Sampled',
+    'X-B3-Flags',
+
+    # Jaeger header (for native client)
+    "uber-trace-id"
+]
+
+
+@app.route('/service/<service_number>')
+def hello(service_number):
+  return ('Hello from behind Envoy (service {})! hostname: {} resolved'
+          'hostname: {}\n'.format(os.environ['SERVICE_NAME'], socket.gethostname(),
+                                  socket.gethostbyname(socket.gethostname())))
+
+
+@app.route('/trace/<service_number>')
+def trace(service_number):
+  headers = {}
+  # call service 2 from service 1
+  if int(os.environ['SERVICE_NAME']) == 1:
+    for header in TRACE_HEADERS_TO_PROPAGATE:
+      if header in request.headers:
+        headers[header] = request.headers[header]
+    ret = requests.get("http://localhost:9000/trace/2", headers=headers)
+  return ('Hello from behind Envoy (service {})! hostname: {} resolved'
+          'hostname: {}\n'.format(os.environ['SERVICE_NAME'], socket.gethostname(),
+                                  socket.gethostbyname(socket.gethostname())))
+
+
+if __name__ == "__main__":
+  app.run(host='127.0.0.1', port=8080, debug=True)
+...
+
+
+vim start_service.sh
+...
+#!/bin/sh
+python3 /code/service.py &
+envoy -c /etc/service-envoy.yaml --service-cluster service${SERVICE_NAME}
+...
+
+
+#7 Create service-envoy configuration
+vim service-envoy.yaml
+
+...
+static_resources:
+  listeners:
+  - address:
+      socket_address:
+        address: 0.0.0.0
+        port_value: 80
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          codec_type: auto
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: service
+              domains:
+              - "*"
+              routes:
+              - match:
+                  prefix: "/service"
+                route:
+                  cluster: local_service
+          http_filters:
+          - name: envoy.router
+            config: {}
+  clusters:
+  - name: local_service
+    connect_timeout: 0.25s
+    type: strict_dns
+    lb_policy: round_robin
+    hosts:
+    - socket_address:
+        address: 127.0.0.1
+        port_value: 8080
+admin:
+  access_log_path: "/dev/null"
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8081
+...
+
+#8 Build and Run
+sudo docker-compose up --build -d
+
+#9 Access
+http://FLOATING_IP/service/1
+http://FLOATING_IP/service/2
+http://FLOATING_IP:8001
+#D> Screenshot Web, Beri nama X-ev-adm-D.png
+
+#10 Delete docker-compose
+sudo docker-compose down
+cd ~
+
+###################################################
+##### Securing traffic with HTTPS and SSL/TLS #####
+###################################################
+
+#1 Generate Cerrificate
+mkdir https_web; cd https_web
+mkdir certs; cd certs; 
+openssl req -nodes -new -x509 \
+  -keyout example-com.key -out example-com.crt \
+  -days 365 \
+  -subj '/CN=example.com/O=My Company Name LTD./C=US'; 
+cd -
+
+sudo docker run -d --name WEB1 katacoda/docker-http-server 
+sudo docker run -d --name WEB2 katacoda/docker-http-server 
+
+sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' WEB1
+sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' WEB2
+
+#2 Create Envoy Configuration
+vim envoy.yaml
+
+...
+static_resources:
+  listeners:
+  - name: listener_http
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8080 }
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          codec_type: auto
+          stat_prefix: ingress_http
+          route_config:
+            virtual_hosts:
+            - name: backend
+              domains:
+              - "example.com"
+              routes:
+              - match:
+                  prefix: "/"
+                redirect:
+                  path_redirect: "/"
+                  https_redirect: true
+          http_filters:
+          - name: envoy.router
+            config: {}
+  - name: listener_https
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 8443 }
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          codec_type: auto
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains:
+              - "example.com"
+              routes:
+              - match:
+                  prefix: "/service/1"
+                route:
+                  cluster: service1
+              - match:
+                  prefix: "/service/2"
+                route:
+                  cluster: service2
+          http_filters:
+          - name: envoy.router
+            config: {}
+      tls_context:
+        common_tls_context:
+          tls_certificates:
+            - certificate_chain:
+                filename: "/etc/envoy/certs/example-com.crt"
+              private_key:
+                filename: "/etc/envoy/certs/example-com.key"
+  clusters:
+  - name: service1
+    connect_timeout: 0.25s
+    type: strict_dns
+    lb_policy: round_robin
+    hosts:
+    - socket_address:
+        address: 172.17.0.3
+        port_value: 80
+  - name: service2
+    connect_timeout: 0.25s
+    type: strict_dns
+    lb_policy: round_robin
+    hosts:
+    - socket_address:
+        address: 172.17.0.4
+        port_value: 80
+
+admin:
+  access_log_path: /tmp/admin_access.log
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 8001
+...
+
+#3 Run Docker
+sudo docker run -d --name https_proxy -p 80:8080 -p 443:8443 -p 8001:8001 -v $(pwd):/etc/envoy/ envoyproxy/envoy:v1.14.1
+
+#4 Curl dari SSH-Gateway
+curl -H "Host: example.com" http://FLOATING_IP_ENVOY -i
+curl -k -H "Host: example.com" https://FLOATING_IP_ENVOY/service/1 -i
+curl -k -H "Host: example.com" https://FLOATING_IP_ENVOY/service/2 -i
+#E> Screenshot hasil curl, Beri nama X-ev-adm-E.png
+
+#5 delete docker Containers
+sudo docker kill https_proxy WEB1 WEB2
+sudo docker rm https_proxy WEB1 WEB2
+
+####################################################
+##### File Based Dynamic Routing Configuration #####
+####################################################
+
+#1 Create Folder
+cd ~
+mkdir eds_routing; cd eds_routing;
+
+#2 Create envoy files
+vim envoy.yaml
+
+...
+node:
+  id: id_1
+  cluster: test
+
+admin:
+  access_log_path: "/dev/null"
+  address:
+    socket_address:
+      address: 0.0.0.0
+      port_value: 9901
+     
+static_resources:
+  listeners:
+  - name: listener_0
+    address:
+      socket_address: { address: 0.0.0.0, port_value: 10000 }
+    filter_chains:
+    - filters:
+      - name: envoy.http_connection_manager
+        config:
+          codec_type: auto
+          stat_prefix: ingress_http
+          route_config:
+            name: local_route
+            virtual_hosts:
+            - name: backend
+              domains:
+                - "*"
+              routes:
+              - match:
+                  prefix: "/"
+                route:
+                  cluster: targetCluster
+          http_filters:
+          - name: envoy.router
+  clusters:
+  - name: targetCluster
+    connect_timeout: 0.25s
+    lb_policy: ROUND_ROBIN
+    type: EDS
+    eds_cluster_config:
+      service_name: localservices
+      eds_config:
+        path: '/etc/envoy/eds.conf'
+...
+
+#3 Start WEB1 Docker
+sudo docker run -d --name WEB1 katacoda/docker-http-server 
+sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' WEB1
+
+#4 Create EDS configuration files
+vim eds.conf
+
+...
+{
+  "version_info": "0",
+  "resources": [{
+    "@type": "type.googleapis.com/envoy.api.v2.ClusterLoadAssignment",
+    "cluster_name": "localservices",
+    "endpoints": [{
+      "lb_endpoints": [{
+        "endpoint": {
+          "address": {
+            "socket_address": {
+              "address": "IP_CONTAINER_WEB1",
+              "port_value": 80
+            }
+          }
+        }
+      }]
+    }]
+  }]
+}
+...
+
+#5 Run envoy
+sudo docker run --name=envoy-eds-filebased -d -p 9901:9901 -p 80:10000 -v $(pwd):/etc/envoy/ envoyproxy/envoy:v1.14.1
+
+#6 Testing Curl
+while true; do curl localhost; sleep .5; done
+
+#F> Screenshot hasil Curl, Beri nama X-ev-adm-F.png
+
+#7 Add another Web Container 
+sudo docker run -d --name WEB2 katacoda/docker-http-server 
+sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' WEB2
+
+#8 Edit EDS configuration files
+vim eds.conf
+
+{
+  "version_info": "0",
+  "resources": [{
+    "@type": "type.googleapis.com/envoy.api.v2.ClusterLoadAssignment",
+    "cluster_name": "localservices",
+    "endpoints": [{
+      "lb_endpoints": [{
+        "endpoint": {
+          "address": {
+            "socket_address": {
+              "address": "IP_CONTAINER_WEB1",
+              "port_value": 80
+            }
+          }
+        }
+      },
+        {
+        "endpoint": {
+          "address": {
+            "socket_address": {
+              "address": "IP_CONTAINER_WEB2",
+              "port_value": 80
+            }
+          }
+        }
+      }]
+    }]
+  }]
+}
+
+#9 Reload configuration
+mv eds.conf tmp; mv tmp eds.conf
+
+#10 Curl again.
+while true; do curl localhost; sleep .5; done
+
+#G> Screenshot hasil Curl, Beri nama X-ev-adm-G.png
+
+#10 delete docker Containers
+sudo docker kill envoy-eds-filebased WEB1 WEB2
+sudo docker rm envoy-eds-filebased WEB1 WEB2

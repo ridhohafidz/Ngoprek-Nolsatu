@@ -1,0 +1,262 @@
+################################################
+##### Lab 2 - ELASTIC STACK ADMINISTRATION #####
+################################################
+
+
+##### Instruksi Environment Lab #####
+
+0. Saat ada X maka ubah ke nomor absen anda
+1. Saat ada [username] maka ubah ke username anda
+
+
+#######################################
+# Studi Kasus 2: Filter Log dengan IF #
+#######################################
+
+# Dalam contoh ini, file log /var/log/secure akan dikirim ke logstash.
+# Di logstash, log tersebut akan di-filter. Hanya isi log tertentu saja yang
+# akan diambil dan disimpan di server elk. Dalam contoh ini, hanya log yang
+# yang mengandung kata "Invalid user" yang akan disimpan.
+
+
+*** Eksekusi di vm podX-elk ***
+
+##1. Konfigurasi Logstash
+
+# Membuat Filter
+
+vi /etc/logstash/conf.d/filter-authlog.conf
+
+...
+filter {
+  if [fields][log_name] == "auth_log" {
+    if "Invalid user" in [message] {
+      mutate {
+        add_tag => "ssh_fail"
+        add_tag => "auth_log"
+      }
+    } else {
+        drop { }
+    }
+  }
+}
+...
+
+# Restart layanan logstash
+
+systemctl restart logstash
+systemctl status logstash
+
+
+*** Eksekusi di vm podX-client2 ***
+
+##2. Konfigurasi Filebeat
+
+vi /etc/filebeat/filebeat.yml
+
+# Pada bagian "filebeat.inputs:", tambahkan berikut:
+...
+- type: log
+  enable: true
+  paths:
+    - /var/log/secure
+  fields:
+    log_name: auth_log
+...
+
+#  Restart layanan filebeat
+
+systemctl restart filebeat
+systemctl status filebeat
+
+
+##3. Test gagal login SSH
+
+# Dari vm podX-elk lakukan percobaan gagal login SSH ke vm podX-client2.
+# ssh test@IP_podX-client2
+# Lakukan percobaan gagal login SSH beberapa kali.
+
+
+*** Eksekusi di vm podX-elk ***
+
+##4. Melihat index log yang tersimpan di elk server
+
+curl http://localhost:9200/_cat/indices?v
+
+# Jika konfigurasi benar, ada 1 index dengan nama index: auth_log_podX-client2
+
+#I> Screenshot hasil curl di atas. Beri nama X-el-adm-I.png
+
+##5. Dashboard Kibana
+
+# Tunnel ke ssh gateway.
+# Gunakan browser dan akses dashboard Kibana: http://Floating_IP_VM_podX-elk.
+# Klik Menu Management > Elasticsearch > Index Management
+
+# Pastikan terdapat index dengan nama: auth_log_podX-client2.
+
+##6. Membuat Index Pattern
+
+# Lanjutkan dengan membuat index pattern.
+# Langkah-langkah membuat index Pattern sama dengan yang ada di Studi Kasus 1.
+# Untuk nama index pattern berikan nama: auth_log_*
+
+# Jika sudah membuat index pattern, silahkan menuju ke Menu Discover.
+# Lakukan query.
+
+# Pada form search ketikkan: tags : ssh_fail
+# Klik Refresh
+
+# Jika tidak ada kesalahan konfigurasi, Kibana akan menampilkan log yang memiliki
+# tag ssh_fail.
+
+#J> Screenshot hasil query di atas. Beri nama X-el-adm-J.png
+
+
+
+#########################################
+# Studi Kasus 3: Filter Log dengan Grok #
+#########################################
+
+# Selain menggunakan IF untuk filter log, bisa juga menggunakan plugin bernama grok.
+# Untuk menggunakan grok, kita perlu membuat semacam pattern yang pattern itu digunakan
+# untuk filter log yang masuk ke logstash. Contoh pattern yang digunakan dalam studi kasus
+# ini adalah sebagai berikut:
+
+# "Invalid user %{USERNAME:ssh_invalid_user} from %{IP:ssh_client_ip}"
+
+# Pattern di atas akan digunakan untuk filter log dan apabila log match dengan pattern tersebut,
+# maka log akan diproses. Contoh log dari /var/log/secure yang match dengan pattern di atas
+# adalah sebagai berikut:
+
+# Feb  4 03:12:59 pod8-client2 sshd[23413]: Invalid user john from 10.1.1.84 port 35906
+
+# Pattern %{USERNAME:ssh_invalid_user} dan %{IP:ssh_client_ip} masing-masing digunakan
+# untuk mengambil dan menyimpan value john dan 10.1.1.84. Sedangkan ssh_invalid_user dan
+# ssh_client_ip adalah identifier yang dapat kita gunakan untuk keperluan query.
+
+# Berikut beberapa link referensi terkait grok:
+#- https://www.elastic.co/guide/en/logstash/current/plugins-filters-grok.html
+#- http://grokconstructor.appspot.com/
+#- https://grokdebug.herokuapp.com/
+
+
+*** Eksekusi di vm podX-elk ***
+
+##1. Edit konfigurasi Logstash yang sudah kita buat di Studi Kasus 2
+
+vi /etc/logstash/conf.d/filter-authlog.conf
+
+...
+filter {
+  if [fields][log_name] == "auth_log" {
+    grok {
+      match => [ "message", "Invalid user %{USERNAME:ssh_invalid_user} from %{IP:ssh_client_ip}" ]
+      add_tag => [ "ssh_fail", "auth_log" ]
+    }
+  }
+
+  if [fields][log_name] == "auth_log" and "_grokparsefailure" in [tags] {
+    drop { }
+  }
+}
+...
+
+##2. Restart layanan logstash
+
+systemctl restart logstash
+systemctl status logstash
+
+##4. Lakukan percobaan gagal login SSH ke podX-client2.
+
+ssh -l [username] IP_podX-client2
+ssh -l nol IP_podX-client2
+ssh -l satu IP_podX-client2
+ssh -l nolsatu IP_podX-client2
+
+##3. Dashboard Kibana
+
+# Tunnel ke ssh gateway.
+# Gunakan browser dan akses dashboard Kibana: http://Floating_IP_VM_podX-elk.
+
+# Klik Menu Discover
+# Pada form search ketikkan: ssh_invalid_user : [username]
+# Klik Refresh
+
+#K> Screenshot hasil query di atas. Beri nama X-el-adm-K.png
+
+
+
+##################################################
+# Studi Kasus 4: Membuat Visualisasi & Dashboard #
+##################################################
+
+# Studi kasus 4 ini tergantung dengan hasil dari studi kasus 3.
+# Dalam contoh ini, kita akan membuat visualisasi:
+# 1. Tag cloud: untuk menampilkan ssh_invalid_user yang melakukan percobaan login SSH ke podX-client2.
+# 2. Area: untuk menampilkan total ssh_invalid_user dalam bentuk grafik area.
+
+##1. Tag Cloud
+
+# Tunnel ke ssh gateway.
+# Gunakan browser dan akses dashboard Kibana: http://Floating_IP_VM_podX-elk.
+
+# Klik Menu Visualize -> + Create a visualization
+# Pilih Tag Cloud
+# Pilih index auth_log_*
+# Pada Buckets, klik Select buckets type
+# Aggregation: Terms
+# Field: ssh_invalid_user.keyword
+# Size: 1000
+# Klik Apply Changes (>)
+
+# Simpan Visualisasi
+# Klik Save
+# Title: tag_cloud_invalid_user
+# Klik Confirm Save
+
+*note: jika pada saat memilih field tidak ada "ssh_invalid_user.keyword", coba refresh field:
+menu management > kibana > index patterns > "auth_log_*" > refresh field list
+
+# Jika konfigurasi benar, akan muncul tag cloud yang berisi nama-nama user yang melakukan
+# percobaan SSH ke podX-client2.
+
+##2. Area
+
+# Klik Menu Visualize -> + Create a visualization
+# Pilih Area
+# Pilih index auth_log_*
+# Pada Buckets, klik X-Axis
+# Aggregation: Date Histogram
+# Field: @timestamp
+# # Klik Apply Changes (>)
+
+# Simpan Visualisasi
+# Klik Save
+# Title: area_count_invalid_user
+# Klik Confirm Save
+
+
+## Membuat Dashboard
+
+# Klik Menu Dashboard -> + Create new dashboard
+# Klik Add
+# Add Panels > Visualization
+# Tambahkan: tag_cloud_invalid_user & area_count_invalid_user
+
+# Simpan Dashboard
+# Klik Save
+# Title: dashboard-[username]
+# Klik Confirm Save
+
+#L> Screenshot hasil dari membuat dashboard di atas. Beri nama X-el-adm-L.png
+
+
+##### Quiz Lab 2 #####
+
+1. Install Docker di vm podX-client1.
+2. Jalankan image nfrankel/simplelog:1 dan kirim log container docker ke ELK.
+3. Buat Visualisasi & Dashboard Log Docker dengan nama dashboard-docker-[username]
+
+#M> Screenshot hasil query di dashboard Kibana X-el-adm-M.png
+#N> Screenshot Dashboard visualisasi Docker X-el-adm-N.png
